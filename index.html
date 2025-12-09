@@ -119,6 +119,10 @@
           const activities = await callAPI(`/api/v1/athlete/${athleteId}/activities?oldest=${monthAgo}&newest=${todayStr}`);
           
           if (Array.isArray(activities)) {
+            // Debug: Log erste Activity um Struktur zu sehen
+            if (activities.length > 0) {
+              console.log('Sample Activity Data:', activities[0]);
+            }
             setRecentActivities(activities);
           }
           
@@ -241,69 +245,12 @@
         }
       };
 
-      // Chat Handler
+      // Chat Handler - DEAKTIVIERT wegen CORS
       const handleChat = async () => {
-        if (!chatInput.trim() || chatLoading) return;
-        
-        const userMsg = chatInput;
-        setChatInput('');
-        setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
-        setChatLoading(true);
-        
-        try {
-          const recovery = calculateRecoveryScore();
-          
-          const context = `Du bist ein sachlicher, kritischer Trainingsexperte für Ultra-Endurance Cycling.
-
-Athleten-Daten:
-- Name: ${athleteData.firstname} ${athleteData.lastname}
-- FTP: ~375W, Gewicht: ${athleteData.icu_weight}kg
-- Recovery Score heute: ${recovery?.score.toFixed(1)}/10
-- HRV: ${recovery?.todayHRV}ms (${recovery?.hrvDelta > 0 ? '+' : ''}${recovery?.hrvDelta?.toFixed(1)}% vs 7d)
-- Ruhepuls: ${recovery?.todayRHR}bpm (${recovery?.rhrDelta > 0 ? '+' : ''}${recovery?.rhrDelta?.toFixed(1)}% vs 7d)
-- ATL: ${recovery?.atl?.toFixed(0)}
-${feeling ? `- Subjektives Befinden: ${feeling}` : ''}
-${notes ? `- Notizen: ${notes}` : ''}
-
-Letzte 5 Aktivitäten:
-${recentActivities.slice(-5).reverse().map(a => 
-  `- ${new Date(a.start_date_local).toLocaleDateString('de-DE')}: ${a.name || 'Training'} (${a.icu_training_load?.toFixed(0) || 'N/A'} TSS, ${(a.moving_time/3600).toFixed(1)}h, Ø${a.avg_hr || 'N/A'}bpm)`
-).join('\n')}
-
-WICHTIG: 
-- Sei sachlich und kritisch
-- Keine Lobhudelei
-- Analysiere nüchtern
-- Gib konkrete Empfehlungen`;
-
-          const response = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-              model: 'claude-sonnet-4-20250514',
-              max_tokens: 2048,
-              messages: [
-                { role: 'user', content: context },
-                { role: 'user', content: userMsg }
-              ]
-            })
-          });
-
-          const data = await response.json();
-          const reply = data.content?.[0]?.text || 'Fehler bei der Antwort.';
-          
-          setChatMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-        } catch (err) {
-          setChatMessages(prev => [...prev, { 
-            role: 'assistant', 
-            content: `Fehler: ${err.message}` 
-          }]);
-        } finally {
-          setChatLoading(false);
-        }
+        setChatMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: '⚠️ Chat-Funktion benötigt einen Backend-Proxy.\n\nDie Anthropic API kann nicht direkt vom Browser aufgerufen werden (CORS-Policy).\n\nLösung: Erweitere deinen Cloudflare Worker um eine /chat Route, die Anfragen an die Anthropic API weiterleitet.' 
+        }]);
       };
 
       const recovery = calculateRecoveryScore();
@@ -517,8 +464,12 @@ WICHTIG:
               ),
               
               recentActivities.length > 0 ? React.createElement('div', { className: 'space-y-2' },
-                recentActivities.slice(-10).reverse().map((activity, idx) =>
-                  React.createElement('div', { 
+                recentActivities.slice(-10).reverse().map((activity, idx) => {
+                  // Versuche verschiedene mögliche Feldnamen für HR und Watt
+                  const hr = activity.avg_hr || activity.average_hr || activity.icu_avg_hr || null;
+                  const watts = activity.avg_watts || activity.average_watts || activity.icu_avg_watts || activity.weighted_avg_watts || null;
+                  
+                  return React.createElement('div', { 
                     key: idx,
                     className: 'bg-slate-700/30 rounded-lg p-4 flex items-center justify-between hover:bg-slate-700/50 transition-colors'
                   },
@@ -542,16 +493,16 @@ WICHTIG:
                         React.createElement('div', { className: 'text-xs text-slate-400' }, 'Stunden')
                       ),
                       React.createElement('div', null,
-                        React.createElement('div', { className: 'text-lg font-bold' }, activity.avg_hr || 'N/A'),
+                        React.createElement('div', { className: 'text-lg font-bold' }, hr ? Math.round(hr) : 'N/A'),
                         React.createElement('div', { className: 'text-xs text-slate-400' }, 'Ø HR')
                       ),
                       React.createElement('div', null,
-                        React.createElement('div', { className: 'text-lg font-bold' }, activity.avg_watts || 'N/A'),
+                        React.createElement('div', { className: 'text-lg font-bold' }, watts ? Math.round(watts) : 'N/A'),
                         React.createElement('div', { className: 'text-xs text-slate-400' }, 'Ø Watt')
                       )
                     )
-                  )
-                )
+                  );
+                })
               ) : React.createElement('div', { className: 'text-slate-400 text-center py-8' }, 'Keine Aktivitäten')
             )
           ),
@@ -564,6 +515,13 @@ WICHTIG:
             ),
             
             React.createElement('div', { className: 'flex-1 overflow-y-auto mb-4 space-y-3' },
+              React.createElement('div', { className: 'bg-orange-900/20 border border-orange-700 rounded-lg p-4' },
+                React.createElement('div', { className: 'font-semibold mb-2' }, '⚠️ Chat benötigt Backend-Proxy'),
+                React.createElement('div', { className: 'text-sm text-slate-300' }, 
+                  'Die Anthropic API kann nicht direkt vom Browser aufgerufen werden (CORS-Policy). ',
+                  'Du musst deinen Cloudflare Worker um eine /chat Route erweitern, die Anfragen an die Anthropic API weiterleitet.'
+                )
+              ),
               chatMessages.map((msg, idx) =>
                 React.createElement('div', { 
                   key: idx,
@@ -580,13 +538,13 @@ WICHTIG:
                 value: chatInput,
                 onChange: (e) => setChatInput(e.target.value),
                 onKeyPress: (e) => e.key === 'Enter' && handleChat(),
-                placeholder: 'Frag mich was...',
-                disabled: chatLoading,
+                placeholder: 'Chat aktuell deaktiviert...',
+                disabled: true,
                 className: 'flex-1 bg-slate-700 text-white px-4 py-3 rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none disabled:opacity-50'
               }),
               React.createElement('button', {
                 onClick: handleChat,
-                disabled: chatLoading || !chatInput.trim(),
+                disabled: true,
                 className: 'bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg transition-colors disabled:opacity-50'
               },
                 React.createElement(Send, { className: 'w-5 h-5' })
