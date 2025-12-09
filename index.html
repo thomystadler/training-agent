@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Training Agent</title>
+  <title>Training Agent - Recovery Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
@@ -12,7 +12,7 @@
   <script type="module">
     import React, { useState } from 'https://esm.sh/react@18.2.0';
     import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
-    import { Activity } from 'https://esm.sh/lucide-react@0.263.1';
+    import { Activity, Heart, TrendingUp, AlertCircle, CheckCircle, RefreshCw } from 'https://esm.sh/lucide-react@0.263.1';
 
     const CONFIG = {
       WORKER_URL: 'https://intervals-icu-proxy.thomystadler.workers.dev',
@@ -26,97 +26,141 @@
       const [isConnected, setIsConnected] = useState(false);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
+      
       const [athleteData, setAthleteData] = useState(null);
+      const [wellnessData, setWellnessData] = useState([]);
+      const [todayWellness, setTodayWellness] = useState(null);
 
       const callAPI = async (endpoint) => {
         const url = `${CONFIG.WORKER_URL}/proxy${endpoint}`;
-        
-        console.log('🔍 Calling:', url);
-        console.log('🔑 API Key:', apiKey ? 'Present' : 'Missing');
-        
         const response = await fetch(url, {
           method: 'GET',
           headers: {
             'X-API-Key': apiKey,
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          },
-          mode: 'cors'
+            'Accept': 'application/json'
+          }
         });
-        
-        console.log('📡 Response status:', response.status);
         
         if (!response.ok) {
           const errorText = await response.text();
-          console.error('❌ Error:', errorText);
           throw new Error(`API Error ${response.status}: ${errorText}`);
         }
         
-        const data = await response.json();
-        console.log('✅ Data received:', data);
-        
-        return data;
+        return await response.json();
       };
 
       const connectToAPI = async () => {
         setLoading(true);
         setError('');
         
-        console.log('🚀 Starting connection...');
-        console.log('📝 API Key:', apiKey);
-        console.log('👤 Athlete ID:', athleteId);
-        
-        if (!apiKey || apiKey.trim() === '') {
-          setError('API-Key fehlt! Bitte eingeben.');
-          setLoading(false);
-          return;
-        }
-        
         try {
-          console.log('📞 Calling athlete API...');
-          
-          // Hole Athlete Basis-Daten
+          // Hole Athlete Daten
           const athlete = await callAPI(`/api/v1/athlete/${athleteId}`);
-          console.log('✅ Athlete data:', athlete);
+          setAthleteData(athlete);
           
-          // Hole Wellness/Fitness-Daten für heute
+          // Hole Wellness-Daten der letzten 7 Tage
           const today = new Date().toISOString().split('T')[0];
-          console.log('📞 Calling wellness API for:', today);
+          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
           
-          try {
-            const wellness = await callAPI(`/api/v1/athlete/${athleteId}/wellness/${today}`);
-            console.log('✅ Wellness data:', wellness);
-            
-            // Kombiniere Daten
-            setAthleteData({
-              ...athlete,
-              ctl: wellness?.ctl || athlete.ctl || 0,
-              atl: wellness?.atl || athlete.atl || 0,
-              tsb: wellness?.form || athlete.yesterday_tsb || 0,
-              hrvSDNN: wellness?.hrvSDNN || 0,
-              restingHR: wellness?.restingHR || athlete.icu_resting_hr || 0
-            });
-          } catch (wellnessError) {
-            console.warn('⚠️ Wellness data not available, using athlete data only');
-            // Falls kein Wellness für heute verfügbar, nutze Athlete-Daten
-            setAthleteData({
-              ...athlete,
-              ctl: athlete.ctl || 0,
-              atl: athlete.atl || 0,
-              tsb: athlete.yesterday_tsb || 0,
-              restingHR: athlete.icu_resting_hr || 0
-            });
+          const wellness = await callAPI(`/api/v1/athlete/${athleteId}/wellness?oldest=${weekAgo}&newest=${today}`);
+          
+          if (Array.isArray(wellness)) {
+            setWellnessData(wellness);
+            // Heute ist das letzte Element
+            setTodayWellness(wellness[wellness.length - 1] || null);
           }
           
           setIsConnected(true);
         } catch (err) {
-          console.error('❌ Connection error:', err);
+          console.error('Connection error:', err);
           setError(err.message);
           setIsConnected(false);
         } finally {
           setLoading(false);
         }
       };
+
+      // Recovery Score Berechnung
+      const calculateRecoveryScore = () => {
+        if (!todayWellness || !wellnessData.length) return null;
+        
+        const recent = wellnessData.filter(d => d.hrvSDNN || d.restingHR);
+        if (recent.length < 2) return null;
+        
+        const avgHRV = recent.reduce((sum, d) => sum + (d.hrvSDNN || 0), 0) / recent.length;
+        const avgRHR = recent.reduce((sum, d) => sum + (d.restingHR || 0), 0) / recent.length;
+        
+        const todayHRV = todayWellness.hrvSDNN || 0;
+        const todayRHR = todayWellness.restingHR || 0;
+        
+        const hrvDelta = avgHRV > 0 ? ((todayHRV - avgHRV) / avgHRV * 100) : 0;
+        const rhrDelta = avgRHR > 0 ? ((todayRHR - avgRHR) / avgRHR * 100) : 0;
+        
+        // Score Berechnung (1-10)
+        let score = 7; // Baseline
+        
+        // HRV (70% Gewichtung)
+        if (hrvDelta > 5) score += 2;
+        else if (hrvDelta > 0) score += 1;
+        else if (hrvDelta > -5) score -= 0.5;
+        else if (hrvDelta > -10) score -= 1.5;
+        else score -= 2.5;
+        
+        // Ruhepuls (20% Gewichtung)
+        if (rhrDelta < -5) score += 0.5;
+        else if (rhrDelta > 10) score -= 1.5;
+        else if (rhrDelta > 5) score -= 0.5;
+        
+        // ATL (10% Gewichtung)
+        const atl = todayWellness.atl || 0;
+        if (atl > 150) score -= 1;
+        else if (atl > 120) score -= 0.5;
+        
+        return {
+          score: Math.max(1, Math.min(10, score)),
+          hrvDelta,
+          rhrDelta,
+          todayHRV,
+          todayRHR,
+          avgHRV: avgHRV.toFixed(0),
+          avgRHR: avgRHR.toFixed(0),
+          atl
+        };
+      };
+
+      const getRecommendation = (recovery) => {
+        if (!recovery) return { status: 'UNKNOWN', text: 'Keine Daten', color: 'gray', detail: '' };
+        
+        const { score, hrvDelta } = recovery;
+        
+        if (score >= 8) {
+          return {
+            status: 'GO',
+            text: 'Bereit für Training',
+            color: 'green',
+            detail: 'HRV und Ruhepuls sind gut. Du kannst dein geplantes Training durchführen.'
+          };
+        } else if (score >= 6) {
+          return {
+            status: 'MODIFY',
+            text: 'Training anpassen',
+            color: 'yellow',
+            detail: hrvDelta < -5 
+              ? 'HRV ist gesunken. Reduziere Intensität (Z4→Z3) oder erhöhe Z2-Anteil.' 
+              : 'Moderate Erholung. Vermeide sehr harte Intervalle heute.'
+          };
+        } else {
+          return {
+            status: 'RECOVERY',
+            text: 'Nur Z1/Z2 empfohlen',
+            color: 'orange',
+            detail: 'Dein Körper zeigt Ermüdungszeichen. Heute nur lockeres Training oder Ruhetag.'
+          };
+        }
+      };
+
+      const recovery = calculateRecoveryScore();
+      const recommendation = getRecommendation(recovery);
 
       if (!isConnected) {
         return React.createElement('div', {
@@ -150,77 +194,169 @@
                 })
               ),
               error && React.createElement('div', {
-                className: 'bg-red-900/30 border border-red-700 text-red-300 px-4 py-3 rounded-lg text-sm flex items-start'
+                className: 'bg-red-900/30 border border-red-700 text-red-300 px-4 py-3 rounded-lg text-sm'
               }, error),
               React.createElement('button', {
                 onClick: connectToAPI,
                 disabled: loading,
-                className: 'w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors disabled:opacity-50'
-              }, loading ? 'Verbinde...' : 'Verbinden')
+                className: 'w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center'
+              }, loading 
+                ? React.createElement('span', null, 'Verbinde...')
+                : 'Verbinden'
+              )
             )
           )
         );
       }
 
+      // Main Dashboard
       return React.createElement('div', {
-        className: 'min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-8'
+        className: 'min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white'
       },
-        React.createElement('div', { className: 'max-w-4xl mx-auto' },
-          React.createElement('div', { className: 'mb-8' },
-            React.createElement('h1', { className: 'text-4xl font-bold mb-2' }, 'Training Agent'),
-            React.createElement('p', { className: 'text-slate-400' }, `Hallo ${athleteData.firstname || 'Athlet'}!`)
-          ),
+        // Header
+        React.createElement('div', {
+          className: 'bg-slate-800/50 border-b border-slate-700 backdrop-blur-sm sticky top-0 z-10'
+        },
+          React.createElement('div', { className: 'max-w-7xl mx-auto px-4 py-4' },
+            React.createElement('div', { className: 'flex items-center justify-between' },
+              React.createElement('div', { className: 'flex items-center space-x-3' },
+                React.createElement(Activity, { className: 'w-8 h-8 text-blue-400' }),
+                React.createElement('div', null,
+                  React.createElement('h1', { className: 'text-xl font-bold' }, 'Training Agent'),
+                  React.createElement('p', { className: 'text-xs text-slate-400' }, 
+                    `Guten Morgen, ${athleteData?.firstname || 'Athlet'}!`
+                  )
+                )
+              ),
+              React.createElement('button', {
+                onClick: connectToAPI,
+                disabled: loading,
+                className: 'p-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors disabled:opacity-50',
+                title: 'Daten aktualisieren'
+              },
+                React.createElement(RefreshCw, { 
+                  className: `w-5 h-5 ${loading ? 'animate-spin' : ''}` 
+                })
+              )
+            )
+          )
+        ),
+
+        // Content
+        React.createElement('div', { className: 'max-w-7xl mx-auto px-4 py-8' },
           
+          // Recovery Dashboard
           React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700 mb-6' },
-            React.createElement('h2', { className: 'text-2xl font-bold mb-4 flex items-center' },
-              React.createElement('span', { className: 'mr-2' }, '✅'),
-              'Verbunden mit Intervals.icu'
+            React.createElement('h2', { className: 'text-2xl font-bold mb-6 flex items-center' },
+              React.createElement(Heart, { className: 'w-7 h-7 mr-2 text-red-400' }),
+              'Recovery Status'
             ),
-            React.createElement('div', { className: 'grid grid-cols-3 gap-6' },
-              React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
-                React.createElement('div', { className: 'text-3xl font-bold text-blue-400' }, 
-                  athleteData.ctl ? athleteData.ctl.toFixed(0) : 'N/A'
+            
+            recovery ? React.createElement('div', null,
+              // Score und Empfehlung
+              React.createElement('div', { className: 'flex items-center justify-between mb-6 pb-6 border-b border-slate-700' },
+                React.createElement('div', null,
+                  React.createElement('div', { className: 'text-5xl font-bold mb-1' }, 
+                    recovery.score.toFixed(1),
+                    React.createElement('span', { className: 'text-2xl text-slate-400 ml-2' }, '/10')
+                  ),
+                  React.createElement('div', { className: 'text-sm text-slate-400' }, 'Recovery Score')
                 ),
-                React.createElement('div', { className: 'text-sm text-slate-400 mt-1' }, 'CTL (Fitness)'),
-                React.createElement('div', { className: 'text-xs text-slate-500 mt-2' }, 'Chronische Trainingsbelastung')
+                React.createElement('div', { 
+                  className: `px-8 py-4 rounded-xl font-bold text-xl ${
+                    recommendation.color === 'green' ? 'bg-green-600' :
+                    recommendation.color === 'yellow' ? 'bg-yellow-600' : 'bg-orange-600'
+                  }`
+                }, recommendation.status)
               ),
-              React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
-                React.createElement('div', { className: 'text-3xl font-bold text-orange-400' }, 
-                  athleteData.atl ? athleteData.atl.toFixed(0) : 'N/A'
+              
+              // Empfehlung Box
+              React.createElement('div', { className: 'bg-slate-700/50 rounded-lg p-5 mb-6' },
+                React.createElement('div', { className: 'font-semibold text-lg mb-2' }, 
+                  recommendation.text
                 ),
-                React.createElement('div', { className: 'text-sm text-slate-400 mt-1' }, 'ATL (Ermüdung)'),
-                React.createElement('div', { className: 'text-xs text-slate-500 mt-2' }, 'Akute Trainingsbelastung')
+                React.createElement('div', { className: 'text-slate-300' }, 
+                  recommendation.detail
+                )
               ),
-              React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
-                React.createElement('div', { className: 'text-3xl font-bold text-green-400' }, 
-                  athleteData.tsb ? athleteData.tsb.toFixed(0) : 'N/A'
+              
+              // Metriken Grid
+              React.createElement('div', { className: 'grid grid-cols-3 gap-4' },
+                // HRV
+                React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
+                  React.createElement('div', { className: 'flex items-baseline' },
+                    React.createElement('div', { className: 'text-3xl font-bold mr-2' }, 
+                      recovery.todayHRV || 'N/A'
+                    ),
+                    React.createElement('div', { className: 'text-sm text-slate-400' }, 'ms')
+                  ),
+                  React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 
+                    `HRV (Ø7d: ${recovery.avgHRV}ms)`
+                  ),
+                  React.createElement('div', { 
+                    className: `text-sm font-semibold mt-2 ${
+                      recovery.hrvDelta > 0 ? 'text-green-400' : 'text-red-400'
+                    }`
+                  }, 
+                    `${recovery.hrvDelta > 0 ? '+' : ''}${recovery.hrvDelta.toFixed(1)}%`
+                  )
                 ),
-                React.createElement('div', { className: 'text-sm text-slate-400 mt-1' }, 'TSB (Form)'),
-                React.createElement('div', { className: 'text-xs text-slate-500 mt-2' }, 'Training Stress Balance')
+                
+                // Ruhepuls
+                React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
+                  React.createElement('div', { className: 'flex items-baseline' },
+                    React.createElement('div', { className: 'text-3xl font-bold mr-2' }, 
+                      recovery.todayRHR || 'N/A'
+                    ),
+                    React.createElement('div', { className: 'text-sm text-slate-400' }, 'bpm')
+                  ),
+                  React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 
+                    `Ruhepuls (Ø7d: ${recovery.avgRHR}bpm)`
+                  ),
+                  React.createElement('div', { 
+                    className: `text-sm font-semibold mt-2 ${
+                      recovery.rhrDelta < 0 ? 'text-green-400' : 'text-red-400'
+                    }`
+                  }, 
+                    `${recovery.rhrDelta > 0 ? '+' : ''}${recovery.rhrDelta.toFixed(1)}%`
+                  )
+                ),
+                
+                // ATL
+                React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
+                  React.createElement('div', { className: 'text-3xl font-bold' }, 
+                    recovery.atl ? recovery.atl.toFixed(0) : 'N/A'
+                  ),
+                  React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 
+                    'ATL (Ermüdung)'
+                  ),
+                  React.createElement('div', { className: 'text-sm text-slate-300 mt-2' }, 
+                    recovery.atl > 120 ? 'Erhöht' : recovery.atl > 80 ? 'Normal' : 'Niedrig'
+                  )
+                )
+              )
+            ) : React.createElement('div', { className: 'text-center py-12' },
+              React.createElement(AlertCircle, { className: 'w-12 h-12 text-slate-500 mx-auto mb-3' }),
+              React.createElement('div', { className: 'text-slate-400' }, 
+                'Keine Wellness-Daten verfügbar'
+              ),
+              React.createElement('div', { className: 'text-sm text-slate-500 mt-2' }, 
+                'Stelle sicher, dass deine Garmin Daten synchronisiert sind'
               )
             )
           ),
 
-          React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
-            React.createElement('h2', { className: 'text-2xl font-bold mb-4' }, 'Recovery-Daten'),
-            React.createElement('div', { className: 'grid grid-cols-2 gap-4' },
-              React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
-                React.createElement('div', { className: 'text-2xl font-bold' }, 
-                  athleteData.restingHR || 'N/A'
-                ),
-                React.createElement('div', { className: 'text-sm text-slate-400 mt-1' }, 'Ruhepuls (bpm)')
-              ),
-              React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
-                React.createElement('div', { className: 'text-2xl font-bold' }, 
-                  athleteData.icu_weight ? `${athleteData.icu_weight} kg` : 'N/A'
-                ),
-                React.createElement('div', { className: 'text-sm text-slate-400 mt-1' }, 'Gewicht')
-              )
+          // Coming Soon Box
+          React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700 border-dashed' },
+            React.createElement('h3', { className: 'text-lg font-bold text-slate-400 mb-2' }, 
+              'Demnächst verfügbar:'
+            ),
+            React.createElement('ul', { className: 'text-slate-500 space-y-1' },
+              React.createElement('li', null, '• Letzte Trainings-Aktivitäten'),
+              React.createElement('li', null, '• Chat-Interface mit Claude'),
+              React.createElement('li', null, '• Post-Workout-Analyse'),
+              React.createElement('li', null, '• Alpha1-Berechnung')
             )
-          ),
-
-          React.createElement('div', { className: 'mt-6 text-center text-sm text-slate-500' },
-            'Nächster Schritt: Recovery Dashboard + Chat → Coming soon!'
           )
         )
       );
