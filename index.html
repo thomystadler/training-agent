@@ -101,13 +101,14 @@
       const calculateRecoveryScore = () => {
         if (!todayWellness || !wellnessData.length) return null;
         
-        const recent = wellnessData.filter(d => d.hrvSDNN || d.restingHR);
+        const recent = wellnessData.filter(d => d.hrv || d.hrvSDNN || d.restingHR);
         if (recent.length < 2) return null;
         
-        const avgHRV = recent.reduce((sum, d) => sum + (d.hrvSDNN || 0), 0) / recent.length;
+        // Nutze hrv ODER hrvSDNN (je nachdem was verfügbar ist)
+        const avgHRV = recent.reduce((sum, d) => sum + (d.hrv || d.hrvSDNN || 0), 0) / recent.length;
         const avgRHR = recent.reduce((sum, d) => sum + (d.restingHR || 0), 0) / recent.length;
         
-        const todayHRV = todayWellness.hrvSDNN || 0;
+        const todayHRV = todayWellness.hrv || todayWellness.hrvSDNN || 0;
         const todayRHR = todayWellness.restingHR || 0;
         
         const hrvDelta = avgHRV > 0 ? ((todayHRV - avgHRV) / avgHRV * 100) : 0;
