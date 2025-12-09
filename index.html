@@ -12,7 +12,7 @@
   <script type="module">
     import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
     import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
-    import { Activity, Heart, Calendar, MessageSquare, RefreshCw, AlertCircle, Send } from 'https://esm.sh/lucide-react@0.263.1';
+    import { Activity, Heart, Calendar, MessageSquare, RefreshCw, AlertCircle, Send, Wind } from 'https://esm.sh/lucide-react@0.263.1';
 
     const CONFIG = {
       WORKER_URL: 'https://intervals-icu-proxy.thomystadler.workers.dev',
@@ -119,10 +119,6 @@
           const activities = await callAPI(`/api/v1/athlete/${athleteId}/activities?oldest=${monthAgo}&newest=${todayStr}`);
           
           if (Array.isArray(activities)) {
-            // Debug: Log erste Activity um Struktur zu sehen
-            if (activities.length > 0) {
-              console.log('Sample Activity Data:', activities[0]);
-            }
             setRecentActivities(activities);
           }
           
@@ -465,16 +461,26 @@
               
               recentActivities.length > 0 ? React.createElement('div', { className: 'space-y-2' },
                 recentActivities.slice(-10).reverse().map((activity, idx) => {
-                  // Versuche verschiedene mögliche Feldnamen für HR und Watt
-                  const hr = activity.avg_hr || activity.average_hr || activity.icu_avg_hr || null;
-                  const watts = activity.avg_watts || activity.average_watts || activity.icu_avg_watts || activity.weighted_avg_watts || null;
+                  // Korrekte Feldnamen basierend auf API-Struktur
+                  const hr = activity.average_heartrate || null;
+                  const watts = activity.icu_weighted_avg_watts || activity.icu_average_watts || null;
+                  
+                  // Atemfrequenz: Nur in Stream verfügbar, kein Durchschnittswert
+                  // Wir zeigen an, ob Respiration-Daten vorhanden sind
+                  const hasRespiration = activity.stream_types?.includes('respiration');
                   
                   return React.createElement('div', { 
                     key: idx,
                     className: 'bg-slate-700/30 rounded-lg p-4 flex items-center justify-between hover:bg-slate-700/50 transition-colors'
                   },
                     React.createElement('div', { className: 'flex-1' },
-                      React.createElement('div', { className: 'font-medium' }, activity.name || 'Training'),
+                      React.createElement('div', { className: 'font-medium flex items-center' }, 
+                        activity.name || 'Training',
+                        hasRespiration && React.createElement(Wind, { 
+                          className: 'w-4 h-4 ml-2 text-cyan-400',
+                          title: 'Atemfrequenz aufgezeichnet'
+                        })
+                      ),
                       React.createElement('div', { className: 'text-sm text-slate-400 mt-1' },
                         new Date(activity.start_date_local).toLocaleDateString('de-DE', { 
                           weekday: 'short', 
