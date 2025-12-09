@@ -57,17 +57,34 @@
           // Hole Athlete Daten
           const athlete = await callAPI(`/api/v1/athlete/${athleteId}`);
           setAthleteData(athlete);
+          console.log('Athlete data:', athlete);
           
-          // Hole Wellness-Daten der letzten 7 Tage
-          const today = new Date().toISOString().split('T')[0];
-          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          // Hole Wellness-Daten der letzten 7 Tage - einzeln pro Tag
+          const wellnessArray = [];
+          const today = new Date();
           
-          const wellness = await callAPI(`/api/v1/athlete/${athleteId}/wellness?oldest=${weekAgo}&newest=${today}`);
+          for (let i = 0; i < 7; i++) {
+            const date = new Date(today);
+            date.setDate(date.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+            
+            try {
+              const dayWellness = await callAPI(`/api/v1/athlete/${athleteId}/wellness/${dateStr}`);
+              console.log(`Wellness for ${dateStr}:`, dayWellness);
+              if (dayWellness) {
+                wellnessArray.push({ ...dayWellness, date: dateStr });
+              }
+            } catch (err) {
+              console.warn(`No wellness data for ${dateStr}`);
+            }
+          }
           
-          if (Array.isArray(wellness)) {
-            setWellnessData(wellness);
-            // Heute ist das letzte Element
-            setTodayWellness(wellness[wellness.length - 1] || null);
+          console.log('All wellness data:', wellnessArray);
+          setWellnessData(wellnessArray);
+          
+          // Heute ist das erste Element (i=0)
+          if (wellnessArray.length > 0) {
+            setTodayWellness(wellnessArray[0]);
           }
           
           setIsConnected(true);
