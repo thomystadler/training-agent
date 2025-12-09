@@ -67,11 +67,26 @@
         setLoading(true);
         setError('');
         
+        console.log('🚀 Starting connection...');
+        console.log('📝 API Key:', apiKey);
+        console.log('👤 Athlete ID:', athleteId);
+        
+        // Wichtig: API Key checken BEVOR wir callen
+        if (!apiKey || apiKey.trim() === '') {
+          setError('API-Key fehlt! Bitte eingeben.');
+          setLoading(false);
+          return;
+        }
+        
         try {
+          console.log('📞 Calling API...');
           const athlete = await callAPI(`/api/v1/athlete/${athleteId}`);
+          console.log('✅ Athlete data:', athlete);
+          
           setAthleteData(athlete);
           setIsConnected(true);
         } catch (err) {
+          console.error('❌ Connection error:', err);
           setError(err.message);
           setIsConnected(false);
         } finally {
@@ -149,3 +164,4 @@
   </script>
 </body>
 </html>
+
