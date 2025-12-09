@@ -1,35 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { Activity, TrendingUp, Heart, Calendar, MessageSquare, RefreshCw, AlertCircle, CheckCircle } from 'https://esm.sh/lucide-react@0.263.1';
+import React, { useState } from 'https://esm.sh/react@18.2.0';
+import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
+import { Activity, Heart, MessageSquare, RefreshCw, AlertCircle, CheckCircle } from 'https://esm.sh/lucide-react@0.263.1';
 
-// WICHTIG: Hier deine Werte eintragen!
 const CONFIG = {
   WORKER_URL: 'https://intervals-icu-proxy.thomystadler.workers.dev',
-  CLAUDE_PROJECT_ID: '019af852-ea99-76c1-80b9-92253bb0139a',
-  ANTHROPIC_API_KEY: 'DEIN_ANTHROPIC_API_KEY', // Optional: Für direkte API-Calls
   DEFAULT_API_KEY: '3zemjjfaoba8649t72snopm65',
   DEFAULT_ATHLETE_ID: 'i177384'
 };
 
-export default function TrainingAgent() {
+function TrainingAgent() {
   const [apiKey, setApiKey] = useState(CONFIG.DEFAULT_API_KEY);
   const [athleteId, setAthleteId] = useState(CONFIG.DEFAULT_ATHLETE_ID);
   const [isConnected, setIsConnected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
-  const [wellnessData, setWellnessData] = useState([]);
-  const [recentActivities, setRecentActivities] = useState([]);
   const [athleteData, setAthleteData] = useState(null);
-  
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatInput, setChatInput] = useState('');
-  const [chatLoading, setChatLoading] = useState(false);
 
-  // API Helper
   const callAPI = async (endpoint) => {
     const url = `${CONFIG.WORKER_URL}/proxy${endpoint}`;
-    
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -46,209 +34,81 @@ export default function TrainingAgent() {
     return await response.json();
   };
 
-  // Connect to Intervals.icu
   const connectToAPI = async () => {
-    if (!apiKey) {
-      setError('Bitte API-Key eingeben');
-      return;
-    }
-    
     setLoading(true);
     setError('');
     
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      
       const athlete = await callAPI(`/api/v1/athlete/${athleteId}`);
       setAthleteData(athlete);
-      
-      const wellness = await callAPI(`/api/v1/athlete/${athleteId}/wellness?oldest=${weekAgo}&newest=${today}`);
-      setWellnessData(Array.isArray(wellness) ? wellness : []);
-      
-      const activities = await callAPI(`/api/v1/athlete/${athleteId}/activities?oldest=${monthAgo}&newest=${today}`);
-      setRecentActivities(Array.isArray(activities) ? activities : []);
-      
       setIsConnected(true);
-      
-      // Load learnings from localStorage
-      const learnings = JSON.parse(localStorage.getItem('agent_learnings') || '{}');
-      
-      setChatMessages([{
-        role: 'assistant',
-        content: `✅ Verbunden!\n\nAktuelle Form:\n• CTL: ${athlete.ctl?.toFixed(0) || 'N/A'}\n• ATL: ${athlete.atl?.toFixed(0) || 'N/A'}\n• TSB: ${athlete.yesterday_tsb?.toFixed(0) || 'N/A'}\n\nIch habe ${activities.length} Aktivitäten und frühere Learnings geladen. Was möchtest du wissen?`
-      }]);
-      
     } catch (err) {
-      setError(`Verbindung fehlgeschlagen: ${err.message}`);
-      console.error('Connection error:', err);
+      setError(`Fehler: ${err.message}`);
       setIsConnected(false);
     } finally {
       setLoading(false);
     }
   };
 
-  // Calculate Recovery Score
-  const calculateRecoveryScore = () => {
-    if (!wellnessData || wellnessData.length === 0) return null;
-    
-    const latest = wellnessData[wellnessData.length - 1];
-    const recent = wellnessData.slice(-7).filter(d => d.hrvSDNN || d.restingHR);
-    
-    if (recent.length === 0) return null;
-    
-    const avgHRV = recent.reduce((sum, d) => sum + (d.hrvSDNN || 0), 0) / recent.length;
-    const avgRHR = recent.reduce((sum, d) => sum + (d.restingHR || 0), 0) / recent.length;
-    
-    const hrvDelta = avgHRV > 0 ? ((latest.hrvSDNN || 0) - avgHRV) / avgHRV * 100 : 0;
-    const rhrDelta = avgRHR > 0 ? ((latest.restingHR || 0) - avgRHR) / avgRHR * 100 : 0;
-    
-    let score = 7;
-    
-    if (hrvDelta > 5) score += 2;
-    else if (hrvDelta > 0) score += 1;
-    else if (hrvDelta > -5) score -= 0.5;
-    else if (hrvDelta > -10) score -= 1.5;
-    else score -= 2.5;
-    
-    if (rhrDelta < -5) score += 0.5;
-    else if (rhrDelta > 10) score -= 1.5;
-    else if (rhrDelta > 5) score -= 0.5;
-    
-    if (athleteData) {
-      if (athleteData.yesterday_tsb < -40) score -= 1.5;
-      else if (athleteData.yesterday_tsb < -30) score -= 0.5;
-    }
-    
-    return {
-      score: Math.max(1, Math.min(10, score)),
-      hrvDelta,
-      rhrDelta,
-      latest
-    };
-  };
-
-  const recovery = calculateRecoveryScore();
-
-  const getRecommendation = () => {
-    if (!recovery) return { status: 'unknown', text: 'Keine Daten', color: 'gray' };
-    
-    const { score } = recovery;
-    
-    if (score >= 8) {
-      return {
-        status: 'GO',
-        text: 'Normales Training',
-        color: 'green',
-        detail: 'HRV und Ruhepuls sind gut. Training wie geplant durchführbar.'
-      };
-    } else if (score >= 6) {
-      return {
-        status: 'MODIFY',
-        text: 'Training anpassen',
-        color: 'yellow',
-        detail: 'Erwäge Intensität zu reduzieren oder mehr Z2 statt Intervalle.'
-      };
-    } else {
-      return {
-        status: 'RECOVERY',
-        text: 'Z1/Z2 empfohlen',
-        color: 'orange',
-        detail: 'Körper braucht Erholung. Heute nur lockeres Training oder Ruhetag.'
-      };
-    }
-  };
-
-  const recommendation = getRecommendation();
-
-  // Handle chat with Claude Project context
-  const handleChat = async () => {
-    if (!chatInput.trim() || chatLoading) return;
-    
-    const userMsg = chatInput;
-    setChatInput('');
-    setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
-    setChatLoading(true);
-    
-    try {
-      // Load learnings
-      const learnings = JSON.parse(localStorage.getItem('agent_learnings') || '{}');
-      
-      const context = `Kontext aus Training Agent Project:
-
-Athleten-Daten (Live):
-- CTL: ${athleteData?.ctl?.toFixed(0)}
-- ATL: ${athleteData?.atl?.toFixed(0)}
-- TSB: ${athleteData?.yesterday_tsb?.toFixed(0)}
-- Recovery Score: ${recovery?.score?.toFixed(1)}/10
-- HRV: ${recovery?.latest?.hrvSDNN}ms (${recovery?.hrvDelta > 0 ? '+' : ''}${recovery?.hrvDelta?.toFixed(1)}%)
-- Ruhepuls: ${recovery?.latest?.restingHR}bpm (${recovery?.rhrDelta > 0 ? '+' : ''}${recovery?.rhrDelta?.toFixed(1)}%)
-
-Letzte 5 Aktivitäten:
-${recentActivities.slice(-5).map(a => `- ${new Date(a.start_date_local).toLocaleDateString('de-DE')}: ${a.name || 'Training'} (${a.icu_training_load?.toFixed(0) || 'N/A'} TSS, ${(a.moving_time/3600).toFixed(1)}h)`).join('\n')}
-
-Gelernte Präferenzen:
-${JSON.stringify(learnings, null, 2)}
-
-WICHTIG: Sei sachlich und kritisch. Analysiere nüchtern. Keine Lobhudelei.`;
-
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'projects-2024-12-02'
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 2048,
-          system: [
-            {
+  if (!isConnected) {
+    return React.createElement('div', {
+      className: 'min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4'
+    },
+      React.createElement('div', {
+        className: 'bg-slate-800 rounded-xl shadow-2xl p-8 max-w-md w-full border border-slate-700'
+      },
+        React.createElement('div', { className: 'text-center mb-6' },
+          React.createElement(Activity, { className: 'w-16 h-16 text-blue-400 mx-auto mb-4' }),
+          React.createElement('h1', { className: 'text-3xl font-bold text-white mb-2' }, 'Training Agent'),
+          React.createElement('p', { className: 'text-slate-400' }, 'Ultra Endurance Coach')
+        ),
+        React.createElement('div', { className: 'space-y-4' },
+          React.createElement('div', null,
+            React.createElement('label', { className: 'block text-sm font-medium text-slate-300 mb-2' }, 'Athlete ID'),
+            React.createElement('input', {
               type: 'text',
-              text: context
-            }
-          ],
-          messages: [
-            { role: 'user', content: userMsg }
-          ]
-        })
-      });
+              value: athleteId,
+              onChange: (e) => setAthleteId(e.target.value),
+              className: 'w-full bg-slate-700 text-white px-4 py-2 rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none'
+            })
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { className: 'block text-sm font-medium text-slate-300 mb-2' }, 'API Key'),
+            React.createElement('input', {
+              type: 'password',
+              value: apiKey,
+              onChange: (e) => setApiKey(e.target.value),
+              className: 'w-full bg-slate-700 text-white px-4 py-2 rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none'
+            })
+          ),
+          error && React.createElement('div', {
+            className: 'bg-red-900/30 border border-red-700 text-red-300 px-4 py-3 rounded-lg text-sm'
+          }, error),
+          React.createElement('button', {
+            onClick: connectToAPI,
+            disabled: loading,
+            className: 'w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors disabled:opacity-50'
+          }, loading ? 'Verbinde...' : 'Verbinden')
+        )
+      )
+    );
+  }
 
-      const data = await response.json();
-      const reply = data.content?.[0]?.text || 'Fehler bei der Antwort.';
-      
-      // Extract learnings from response
-      if (reply.includes('✅ Gespeichert:') || reply.includes('Merke:')) {
-        // Simple learning extraction
-        const learning = reply.match(/(?:Gespeichert:|Merke:) (.+)/);
-        if (learning) {
-          learnings.notes = learnings.notes || [];
-          learnings.notes.push({
-            date: new Date().toISOString().split('T')[0],
-            note: learning[1]
-          });
-          localStorage.setItem('agent_learnings', JSON.stringify(learnings));
-        }
-      }
-      
-      setChatMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-    } catch (err) {
-      setChatMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: `Fehler: ${err.message}` 
-      }]);
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-  // Rest of the component... (Dashboard UI - identical to previous version)
-  // [Gekürzt für Übersichtlichkeit - vollständiger Code im finalen Package]
-  
-  return (
-    
-      {/* Login oder Dashboard - wie vorher */}
-    
+  return React.createElement('div', {
+    className: 'min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-8'
+  },
+    React.createElement('h1', { className: 'text-4xl font-bold mb-4' }, 'Training Agent'),
+    React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
+      React.createElement('h2', { className: 'text-2xl font-bold mb-4' }, 'Verbunden!'),
+      React.createElement('div', null,
+        React.createElement('p', null, `CTL: ${athleteData?.ctl?.toFixed(0)}`),
+        React.createElement('p', null, `ATL: ${athleteData?.atl?.toFixed(0)}`),
+        React.createElement('p', null, `TSB: ${athleteData?.yesterday_tsb?.toFixed(0)}`)
+      )
+    )
   );
 }
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  React.createElement(TrainingAgent)
+);
