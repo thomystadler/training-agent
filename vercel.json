@@ -1,13 +1,5 @@
 {
-  "headers": [
-    {
-      "source": "/app.js",
-      "headers": [
-        {
-          "key": "Content-Type",
-          "value": "application/javascript"
-        }
-      ]
-    }
-  ]
+  "buildCommand": "echo 'No build needed'",
+  "outputDirectory": ".",
+  "framework": null
 }
