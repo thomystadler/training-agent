@@ -10,9 +10,9 @@
   <div id="root"></div>
   
   <script type="module">
-    import React, { useState } from 'https://esm.sh/react@18.2.0';
+    import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
     import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
-    import { Activity, Heart, TrendingUp, AlertCircle, CheckCircle, RefreshCw } from 'https://esm.sh/lucide-react@0.263.1';
+    import { Activity, Heart, Calendar, MessageSquare, RefreshCw, AlertCircle, Send } from 'https://esm.sh/lucide-react@0.263.1';
 
     const CONFIG = {
       WORKER_URL: 'https://intervals-icu-proxy.thomystadler.workers.dev',
@@ -30,16 +30,47 @@
       const [athleteData, setAthleteData] = useState(null);
       const [wellnessData, setWellnessData] = useState([]);
       const [todayWellness, setTodayWellness] = useState(null);
+      const [recentActivities, setRecentActivities] = useState([]);
+      
+      // Check-in State
+      const [feeling, setFeeling] = useState('');
+      const [notes, setNotes] = useState('');
+      const [checkedIn, setCheckedIn] = useState(false);
+      
+      // Chat State
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [chatMessages, setChatMessages] = useState([]);
+      const [chatInput, setChatInput] = useState('');
+      const [chatLoading, setChatLoading] = useState(false);
 
-      const callAPI = async (endpoint) => {
+      // Load check-in from LocalStorage
+      useEffect(() => {
+        const today = new Date().toISOString().split('T')[0];
+        const stored = localStorage.getItem(`checkin_${today}`);
+        if (stored) {
+          const data = JSON.parse(stored);
+          setFeeling(data.feeling);
+          setNotes(data.notes);
+          setCheckedIn(true);
+        }
+      }, []);
+
+      const callAPI = async (endpoint, method = 'GET', body = null) => {
         const url = `${CONFIG.WORKER_URL}/proxy${endpoint}`;
-        const response = await fetch(url, {
-          method: 'GET',
+        const options = {
+          method,
           headers: {
             'X-API-Key': apiKey,
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
           }
-        });
+        };
+        
+        if (body && method !== 'GET') {
+          options.body = JSON.stringify(body);
+        }
+        
+        const response = await fetch(url, options);
         
         if (!response.ok) {
           const errorText = await response.text();
@@ -54,12 +85,11 @@
         setError('');
         
         try {
-          // Hole Athlete Daten
+          // Athlete Daten
           const athlete = await callAPI(`/api/v1/athlete/${athleteId}`);
           setAthleteData(athlete);
-          console.log('Athlete data:', athlete);
           
-          // Hole Wellness-Daten der letzten 7 Tage - einzeln pro Tag
+          // Wellness letzte 7 Tage
           const wellnessArray = [];
           const today = new Date();
           
@@ -70,24 +100,33 @@
             
             try {
               const dayWellness = await callAPI(`/api/v1/athlete/${athleteId}/wellness/${dateStr}`);
-              console.log(`Wellness for ${dateStr}:`, dayWellness);
               if (dayWellness) {
                 wellnessArray.push({ ...dayWellness, date: dateStr });
               }
             } catch (err) {
-              console.warn(`No wellness data for ${dateStr}`);
+              console.warn(`No wellness for ${dateStr}`);
             }
           }
           
-          console.log('All wellness data:', wellnessArray);
           setWellnessData(wellnessArray);
-          
-          // Heute ist das erste Element (i=0)
           if (wellnessArray.length > 0) {
             setTodayWellness(wellnessArray[0]);
           }
           
+          // Letzte Aktivitäten (30 Tage)
+          const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          const todayStr = new Date().toISOString().split('T')[0];
+          const activities = await callAPI(`/api/v1/athlete/${athleteId}/activities?oldest=${monthAgo}&newest=${todayStr}`);
+          
+          if (Array.isArray(activities)) {
+            setRecentActivities(activities);
+          }
+          
           setIsConnected(true);
+          setChatMessages([{
+            role: 'assistant',
+            content: `✅ Verbunden! Ich habe ${activities.length} Aktivitäten der letzten 30 Tage geladen. Was möchtest du wissen?`
+          }]);
         } catch (err) {
           console.error('Connection error:', err);
           setError(err.message);
@@ -97,14 +136,35 @@
         }
       };
 
-      // Recovery Score Berechnung
+      // Check-in speichern
+      const handleCheckIn = async () => {
+        const today = new Date().toISOString().split('T')[0];
+        const checkinData = { feeling, notes, timestamp: new Date().toISOString() };
+        
+        // LocalStorage
+        localStorage.setItem(`checkin_${today}`, JSON.stringify(checkinData));
+        
+        // Zu Intervals.icu schicken (als Wellness-Kommentar)
+        try {
+          const wellnessUpdate = {
+            comments: `Befinden: ${feeling}${notes ? ' | ' + notes : ''}`
+          };
+          await callAPI(`/api/v1/athlete/${athleteId}/wellness/${today}`, 'PUT', wellnessUpdate);
+        } catch (err) {
+          console.warn('Wellness update failed:', err);
+        }
+        
+        setCheckedIn(true);
+        alert('Check-in gespeichert!');
+      };
+
+      // Recovery Score mit Check-in Override
       const calculateRecoveryScore = () => {
         if (!todayWellness || !wellnessData.length) return null;
         
         const recent = wellnessData.filter(d => d.hrv || d.hrvSDNN || d.restingHR);
         if (recent.length < 2) return null;
         
-        // Nutze hrv ODER hrvSDNN (je nachdem was verfügbar ist)
         const avgHRV = recent.reduce((sum, d) => sum + (d.hrv || d.hrvSDNN || 0), 0) / recent.length;
         const avgRHR = recent.reduce((sum, d) => sum + (d.restingHR || 0), 0) / recent.length;
         
@@ -114,25 +174,29 @@
         const hrvDelta = avgHRV > 0 ? ((todayHRV - avgHRV) / avgHRV * 100) : 0;
         const rhrDelta = avgRHR > 0 ? ((todayRHR - avgRHR) / avgRHR * 100) : 0;
         
-        // Score Berechnung (1-10)
-        let score = 7; // Baseline
+        let score = 7;
         
-        // HRV (70% Gewichtung)
+        // HRV (70%)
         if (hrvDelta > 5) score += 2;
         else if (hrvDelta > 0) score += 1;
         else if (hrvDelta > -5) score -= 0.5;
         else if (hrvDelta > -10) score -= 1.5;
         else score -= 2.5;
         
-        // Ruhepuls (20% Gewichtung)
+        // Ruhepuls (20%)
         if (rhrDelta < -5) score += 0.5;
         else if (rhrDelta > 10) score -= 1.5;
         else if (rhrDelta > 5) score -= 0.5;
         
-        // ATL (10% Gewichtung)
+        // ATL (10%)
         const atl = todayWellness.atl || 0;
         if (atl > 150) score -= 1;
         else if (atl > 120) score -= 0.5;
+        
+        // Subjektives Befinden Override
+        if (feeling === 'erschoepft') score = Math.min(score, 5);
+        else if (feeling === 'muede') score -= 1;
+        else if (feeling === 'frisch') score += 0.5;
         
         return {
           score: Math.max(1, Math.min(10, score)),
@@ -156,7 +220,7 @@
             status: 'GO',
             text: 'Bereit für Training',
             color: 'green',
-            detail: 'HRV und Ruhepuls sind gut. Du kannst dein geplantes Training durchführen.'
+            detail: 'HRV und Ruhepuls sind gut. Training wie geplant möglich.'
           };
         } else if (score >= 6) {
           return {
@@ -164,16 +228,81 @@
             text: 'Training anpassen',
             color: 'yellow',
             detail: hrvDelta < -5 
-              ? 'HRV ist gesunken. Reduziere Intensität (Z4→Z3) oder erhöhe Z2-Anteil.' 
-              : 'Moderate Erholung. Vermeide sehr harte Intervalle heute.'
+              ? 'HRV gesunken. Intensität reduzieren (Z4→Z3).' 
+              : 'Moderate Erholung. Harte Intervalle vermeiden.'
           };
         } else {
           return {
             status: 'RECOVERY',
             text: 'Nur Z1/Z2 empfohlen',
             color: 'orange',
-            detail: 'Dein Körper zeigt Ermüdungszeichen. Heute nur lockeres Training oder Ruhetag.'
+            detail: 'Körper zeigt Ermüdung. Heute nur locker oder Ruhetag.'
           };
+        }
+      };
+
+      // Chat Handler
+      const handleChat = async () => {
+        if (!chatInput.trim() || chatLoading) return;
+        
+        const userMsg = chatInput;
+        setChatInput('');
+        setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+        setChatLoading(true);
+        
+        try {
+          const recovery = calculateRecoveryScore();
+          
+          const context = `Du bist ein sachlicher, kritischer Trainingsexperte für Ultra-Endurance Cycling.
+
+Athleten-Daten:
+- Name: ${athleteData.firstname} ${athleteData.lastname}
+- FTP: ~375W, Gewicht: ${athleteData.icu_weight}kg
+- Recovery Score heute: ${recovery?.score.toFixed(1)}/10
+- HRV: ${recovery?.todayHRV}ms (${recovery?.hrvDelta > 0 ? '+' : ''}${recovery?.hrvDelta?.toFixed(1)}% vs 7d)
+- Ruhepuls: ${recovery?.todayRHR}bpm (${recovery?.rhrDelta > 0 ? '+' : ''}${recovery?.rhrDelta?.toFixed(1)}% vs 7d)
+- ATL: ${recovery?.atl?.toFixed(0)}
+${feeling ? `- Subjektives Befinden: ${feeling}` : ''}
+${notes ? `- Notizen: ${notes}` : ''}
+
+Letzte 5 Aktivitäten:
+${recentActivities.slice(-5).reverse().map(a => 
+  `- ${new Date(a.start_date_local).toLocaleDateString('de-DE')}: ${a.name || 'Training'} (${a.icu_training_load?.toFixed(0) || 'N/A'} TSS, ${(a.moving_time/3600).toFixed(1)}h, Ø${a.avg_hr || 'N/A'}bpm)`
+).join('\n')}
+
+WICHTIG: 
+- Sei sachlich und kritisch
+- Keine Lobhudelei
+- Analysiere nüchtern
+- Gib konkrete Empfehlungen`;
+
+          const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 2048,
+              messages: [
+                { role: 'user', content: context },
+                { role: 'user', content: userMsg }
+              ]
+            })
+          });
+
+          const data = await response.json();
+          const reply = data.content?.[0]?.text || 'Fehler bei der Antwort.';
+          
+          setChatMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+        } catch (err) {
+          setChatMessages(prev => [...prev, { 
+            role: 'assistant', 
+            content: `Fehler: ${err.message}` 
+          }]);
+        } finally {
+          setChatLoading(false);
         }
       };
 
@@ -217,11 +346,8 @@
               React.createElement('button', {
                 onClick: connectToAPI,
                 disabled: loading,
-                className: 'w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center'
-              }, loading 
-                ? React.createElement('span', null, 'Verbinde...')
-                : 'Verbinden'
-              )
+                className: 'w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors disabled:opacity-50'
+              }, loading ? 'Verbinde...' : 'Verbinden')
             )
           )
         );
@@ -246,143 +372,234 @@
                   )
                 )
               ),
-              React.createElement('button', {
-                onClick: connectToAPI,
-                disabled: loading,
-                className: 'p-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors disabled:opacity-50',
-                title: 'Daten aktualisieren'
-              },
-                React.createElement(RefreshCw, { 
-                  className: `w-5 h-5 ${loading ? 'animate-spin' : ''}` 
-                })
+              React.createElement('div', { className: 'flex items-center space-x-2' },
+                React.createElement('button', {
+                  onClick: connectToAPI,
+                  disabled: loading,
+                  className: 'p-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors',
+                  title: 'Aktualisieren'
+                },
+                  React.createElement(RefreshCw, { className: `w-5 h-5 ${loading ? 'animate-spin' : ''}` })
+                ),
+                React.createElement('button', {
+                  onClick: () => setActiveTab('dashboard'),
+                  className: `px-4 py-2 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'}`
+                }, 'Dashboard'),
+                React.createElement('button', {
+                  onClick: () => setActiveTab('chat'),
+                  className: `p-2 rounded-lg transition-colors ${activeTab === 'chat' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'}`
+                },
+                  React.createElement(MessageSquare, { className: 'w-5 h-5' })
+                )
               )
             )
           )
         ),
 
         // Content
-        React.createElement('div', { className: 'max-w-7xl mx-auto px-4 py-8' },
+        React.createElement('div', { className: 'max-w-7xl mx-auto px-4 py-6' },
           
-          // Recovery Dashboard
-          React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700 mb-6' },
-            React.createElement('h2', { className: 'text-2xl font-bold mb-6 flex items-center' },
-              React.createElement(Heart, { className: 'w-7 h-7 mr-2 text-red-400' }),
-              'Recovery Status'
-            ),
+          activeTab === 'dashboard' && React.createElement('div', { className: 'space-y-6' },
             
-            recovery ? React.createElement('div', null,
-              // Score und Empfehlung
-              React.createElement('div', { className: 'flex items-center justify-between mb-6 pb-6 border-b border-slate-700' },
+            // Check-in Box
+            React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
+              React.createElement('h2', { className: 'text-xl font-bold mb-4' }, 'Täglicher Check-in'),
+              !checkedIn ? React.createElement('div', { className: 'space-y-4' },
                 React.createElement('div', null,
-                  React.createElement('div', { className: 'text-5xl font-bold mb-1' }, 
-                    recovery.score.toFixed(1),
-                    React.createElement('span', { className: 'text-2xl text-slate-400 ml-2' }, '/10')
-                  ),
-                  React.createElement('div', { className: 'text-sm text-slate-400' }, 'Recovery Score')
+                  React.createElement('label', { className: 'block text-sm font-medium mb-2' }, 'Wie fühlst du dich heute?'),
+                  React.createElement('select', {
+                    value: feeling,
+                    onChange: (e) => setFeeling(e.target.value),
+                    className: 'w-full bg-slate-700 text-white px-4 py-2 rounded-lg border border-slate-600'
+                  },
+                    React.createElement('option', { value: '' }, 'Auswählen...'),
+                    React.createElement('option', { value: 'frisch' }, '😊 Frisch und erholt'),
+                    React.createElement('option', { value: 'normal' }, '😐 Normal'),
+                    React.createElement('option', { value: 'muede' }, '😴 Etwas müde'),
+                    React.createElement('option', { value: 'erschoepft' }, '😵 Erschöpft')
+                  )
                 ),
-                React.createElement('div', { 
-                  className: `px-8 py-4 rounded-xl font-bold text-xl ${
-                    recommendation.color === 'green' ? 'bg-green-600' :
-                    recommendation.color === 'yellow' ? 'bg-yellow-600' : 'bg-orange-600'
-                  }`
-                }, recommendation.status)
+                React.createElement('div', null,
+                  React.createElement('label', { className: 'block text-sm font-medium mb-2' }, 'Notizen (optional)'),
+                  React.createElement('textarea', {
+                    value: notes,
+                    onChange: (e) => setNotes(e.target.value),
+                    placeholder: 'Wie hast du geschlafen? Stress? Muskelkater?',
+                    className: 'w-full bg-slate-700 text-white px-4 py-2 rounded-lg border border-slate-600 h-24 resize-none',
+                    maxLength: 500
+                  })
+                ),
+                React.createElement('button', {
+                  onClick: handleCheckIn,
+                  disabled: !feeling,
+                  className: 'bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg disabled:opacity-50'
+                }, 'Check-in speichern')
+              ) : React.createElement('div', { className: 'bg-green-900/20 border border-green-700 rounded-lg p-4' },
+                React.createElement('div', { className: 'flex items-center mb-2' },
+                  React.createElement('span', { className: 'text-2xl mr-2' }, 
+                    feeling === 'frisch' ? '😊' : feeling === 'normal' ? '😐' : feeling === 'muede' ? '😴' : '😵'
+                  ),
+                  React.createElement('span', { className: 'font-semibold' }, 'Check-in abgeschlossen')
+                ),
+                notes && React.createElement('div', { className: 'text-sm text-slate-300 mt-2' }, notes)
+              )
+            ),
+
+            // Recovery Dashboard
+            React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
+              React.createElement('h2', { className: 'text-2xl font-bold mb-6 flex items-center' },
+                React.createElement(Heart, { className: 'w-7 h-7 mr-2 text-red-400' }),
+                'Recovery Status'
               ),
               
-              // Empfehlung Box
-              React.createElement('div', { className: 'bg-slate-700/50 rounded-lg p-5 mb-6' },
-                React.createElement('div', { className: 'font-semibold text-lg mb-2' }, 
-                  recommendation.text
+              recovery ? React.createElement('div', null,
+                React.createElement('div', { className: 'flex items-center justify-between mb-6 pb-6 border-b border-slate-700' },
+                  React.createElement('div', null,
+                    React.createElement('div', { className: 'text-5xl font-bold mb-1' }, 
+                      recovery.score.toFixed(1),
+                      React.createElement('span', { className: 'text-2xl text-slate-400 ml-2' }, '/10')
+                    ),
+                    React.createElement('div', { className: 'text-sm text-slate-400' }, 'Recovery Score')
+                  ),
+                  React.createElement('div', { 
+                    className: `px-8 py-4 rounded-xl font-bold text-xl ${
+                      recommendation.color === 'green' ? 'bg-green-600' :
+                      recommendation.color === 'yellow' ? 'bg-yellow-600' : 'bg-orange-600'
+                    }`
+                  }, recommendation.status)
                 ),
-                React.createElement('div', { className: 'text-slate-300' }, 
-                  recommendation.detail
+                
+                React.createElement('div', { className: 'bg-slate-700/50 rounded-lg p-5 mb-6' },
+                  React.createElement('div', { className: 'font-semibold text-lg mb-2' }, recommendation.text),
+                  React.createElement('div', { className: 'text-slate-300' }, recommendation.detail)
+                ),
+                
+                React.createElement('div', { className: 'grid grid-cols-3 gap-4' },
+                  React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
+                    React.createElement('div', { className: 'flex items-baseline' },
+                      React.createElement('div', { className: 'text-3xl font-bold mr-2' }, recovery.todayHRV || 'N/A'),
+                      React.createElement('div', { className: 'text-sm text-slate-400' }, 'ms')
+                    ),
+                    React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, `HRV (Ø7d: ${recovery.avgHRV}ms)`),
+                    React.createElement('div', { 
+                      className: `text-sm font-semibold mt-2 ${recovery.hrvDelta > 0 ? 'text-green-400' : 'text-red-400'}`
+                    }, `${recovery.hrvDelta > 0 ? '+' : ''}${recovery.hrvDelta.toFixed(1)}%`)
+                  ),
+                  React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
+                    React.createElement('div', { className: 'flex items-baseline' },
+                      React.createElement('div', { className: 'text-3xl font-bold mr-2' }, recovery.todayRHR || 'N/A'),
+                      React.createElement('div', { className: 'text-sm text-slate-400' }, 'bpm')
+                    ),
+                    React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, `Ruhepuls (Ø7d: ${recovery.avgRHR}bpm)`),
+                    React.createElement('div', { 
+                      className: `text-sm font-semibold mt-2 ${recovery.rhrDelta < 0 ? 'text-green-400' : 'text-red-400'}`
+                    }, `${recovery.rhrDelta > 0 ? '+' : ''}${recovery.rhrDelta.toFixed(1)}%`)
+                  ),
+                  React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
+                    React.createElement('div', { className: 'text-3xl font-bold' }, recovery.atl ? recovery.atl.toFixed(0) : 'N/A'),
+                    React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 'ATL (Ermüdung)'),
+                    React.createElement('div', { className: 'text-sm text-slate-300 mt-2' }, 
+                      recovery.atl > 120 ? 'Erhöht' : recovery.atl > 80 ? 'Normal' : 'Niedrig'
+                    )
+                  )
                 )
+              ) : React.createElement('div', { className: 'text-center py-12' },
+                React.createElement(AlertCircle, { className: 'w-12 h-12 text-slate-500 mx-auto mb-3' }),
+                React.createElement('div', { className: 'text-slate-400' }, 'Keine Wellness-Daten')
+              )
+            ),
+
+            // Letzte Trainings
+            React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
+              React.createElement('h2', { className: 'text-2xl font-bold mb-4 flex items-center' },
+                React.createElement(Calendar, { className: 'w-6 h-6 mr-2 text-purple-400' }),
+                'Letzte Trainings'
               ),
               
-              // Metriken Grid
-              React.createElement('div', { className: 'grid grid-cols-3 gap-4' },
-                // HRV
-                React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
-                  React.createElement('div', { className: 'flex items-baseline' },
-                    React.createElement('div', { className: 'text-3xl font-bold mr-2' }, 
-                      recovery.todayHRV || 'N/A'
-                    ),
-                    React.createElement('div', { className: 'text-sm text-slate-400' }, 'ms')
-                  ),
-                  React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 
-                    `HRV (Ø7d: ${recovery.avgHRV}ms)`
-                  ),
+              recentActivities.length > 0 ? React.createElement('div', { className: 'space-y-2' },
+                recentActivities.slice(-10).reverse().map((activity, idx) =>
                   React.createElement('div', { 
-                    className: `text-sm font-semibold mt-2 ${
-                      recovery.hrvDelta > 0 ? 'text-green-400' : 'text-red-400'
-                    }`
-                  }, 
-                    `${recovery.hrvDelta > 0 ? '+' : ''}${recovery.hrvDelta.toFixed(1)}%`
-                  )
-                ),
-                
-                // Ruhepuls
-                React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
-                  React.createElement('div', { className: 'flex items-baseline' },
-                    React.createElement('div', { className: 'text-3xl font-bold mr-2' }, 
-                      recovery.todayRHR || 'N/A'
+                    key: idx,
+                    className: 'bg-slate-700/30 rounded-lg p-4 flex items-center justify-between hover:bg-slate-700/50 transition-colors'
+                  },
+                    React.createElement('div', { className: 'flex-1' },
+                      React.createElement('div', { className: 'font-medium' }, activity.name || 'Training'),
+                      React.createElement('div', { className: 'text-sm text-slate-400 mt-1' },
+                        new Date(activity.start_date_local).toLocaleDateString('de-DE', { 
+                          weekday: 'short', 
+                          day: '2-digit', 
+                          month: '2-digit' 
+                        })
+                      )
                     ),
-                    React.createElement('div', { className: 'text-sm text-slate-400' }, 'bpm')
-                  ),
-                  React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 
-                    `Ruhepuls (Ø7d: ${recovery.avgRHR}bpm)`
-                  ),
-                  React.createElement('div', { 
-                    className: `text-sm font-semibold mt-2 ${
-                      recovery.rhrDelta < 0 ? 'text-green-400' : 'text-red-400'
-                    }`
-                  }, 
-                    `${recovery.rhrDelta > 0 ? '+' : ''}${recovery.rhrDelta.toFixed(1)}%`
-                  )
-                ),
-                
-                // ATL
-                React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
-                  React.createElement('div', { className: 'text-3xl font-bold' }, 
-                    recovery.atl ? recovery.atl.toFixed(0) : 'N/A'
-                  ),
-                  React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 
-                    'ATL (Ermüdung)'
-                  ),
-                  React.createElement('div', { className: 'text-sm text-slate-300 mt-2' }, 
-                    recovery.atl > 120 ? 'Erhöht' : recovery.atl > 80 ? 'Normal' : 'Niedrig'
+                    React.createElement('div', { className: 'grid grid-cols-4 gap-4 text-right' },
+                      React.createElement('div', null,
+                        React.createElement('div', { className: 'text-lg font-bold' }, activity.icu_training_load?.toFixed(0) || 'N/A'),
+                        React.createElement('div', { className: 'text-xs text-slate-400' }, 'TSS')
+                      ),
+                      React.createElement('div', null,
+                        React.createElement('div', { className: 'text-lg font-bold' }, (activity.moving_time / 3600).toFixed(1)),
+                        React.createElement('div', { className: 'text-xs text-slate-400' }, 'Stunden')
+                      ),
+                      React.createElement('div', null,
+                        React.createElement('div', { className: 'text-lg font-bold' }, activity.avg_hr || 'N/A'),
+                        React.createElement('div', { className: 'text-xs text-slate-400' }, 'Ø HR')
+                      ),
+                      React.createElement('div', null,
+                        React.createElement('div', { className: 'text-lg font-bold' }, activity.avg_watts || 'N/A'),
+                        React.createElement('div', { className: 'text-xs text-slate-400' }, 'Ø Watt')
+                      )
+                    )
                   )
                 )
-              )
-            ) : React.createElement('div', { className: 'text-center py-12' },
-              React.createElement(AlertCircle, { className: 'w-12 h-12 text-slate-500 mx-auto mb-3' }),
-              React.createElement('div', { className: 'text-slate-400' }, 
-                'Keine Wellness-Daten verfügbar'
-              ),
-              React.createElement('div', { className: 'text-sm text-slate-500 mt-2' }, 
-                'Stelle sicher, dass deine Garmin Daten synchronisiert sind'
-              )
+              ) : React.createElement('div', { className: 'text-slate-400 text-center py-8' }, 'Keine Aktivitäten')
             )
           ),
 
-          // Coming Soon Box
-          React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700 border-dashed' },
-            React.createElement('h3', { className: 'text-lg font-bold text-slate-400 mb-2' }, 
-              'Demnächst verfügbar:'
+          // Chat Tab
+          activeTab === 'chat' && React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700 h-[700px] flex flex-col' },
+            React.createElement('h2', { className: 'text-2xl font-bold mb-4 flex items-center' },
+              React.createElement(MessageSquare, { className: 'w-6 h-6 mr-2 text-blue-400' }),
+              'Training Chat'
             ),
-            React.createElement('ul', { className: 'text-slate-500 space-y-1' },
-              React.createElement('li', null, '• Letzte Trainings-Aktivitäten'),
-              React.createElement('li', null, '• Chat-Interface mit Claude'),
-              React.createElement('li', null, '• Post-Workout-Analyse'),
-              React.createElement('li', null, '• Alpha1-Berechnung')
+            
+            React.createElement('div', { className: 'flex-1 overflow-y-auto mb-4 space-y-3' },
+              chatMessages.map((msg, idx) =>
+                React.createElement('div', { 
+                  key: idx,
+                  className: `p-4 rounded-lg ${msg.role === 'user' ? 'bg-blue-600 ml-12' : 'bg-slate-700 mr-12'}`
+                },
+                  React.createElement('div', { className: 'whitespace-pre-wrap' }, msg.content)
+                )
+              )
+            ),
+            
+            React.createElement('div', { className: 'flex items-center space-x-2' },
+              React.createElement('input', {
+                type: 'text',
+                value: chatInput,
+                onChange: (e) => setChatInput(e.target.value),
+                onKeyPress: (e) => e.key === 'Enter' && handleChat(),
+                placeholder: 'Frag mich was...',
+                disabled: chatLoading,
+                className: 'flex-1 bg-slate-700 text-white px-4 py-3 rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none disabled:opacity-50'
+              }),
+              React.createElement('button', {
+                onClick: handleChat,
+                disabled: chatLoading || !chatInput.trim(),
+                className: 'bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg transition-colors disabled:opacity-50'
+              },
+                React.createElement(Send, { className: 'w-5 h-5' })
+              )
             )
           )
         )
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(
-      React.createElement(TrainingAgent)
-    );
+    // Render
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(TrainingAgent));
   </script>
 </body>
 </html>
