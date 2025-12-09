@@ -29,14 +29,31 @@
       const [athleteData, setAthleteData] = useState(null);
 
       const callAPI = async (endpoint) => {
-        const url = `${CONFIG.WORKER_URL}/proxy${endpoint}`;
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'X-API-Key': apiKey,
-            'Accept': 'application/json'
-          }
-        });
+      const url = `${CONFIG.WORKER_URL}/proxy${endpoint}`;
+      console.log('🔍 Calling:', url);
+      console.log('🔑 API Key:', apiKey ? 'Present' : 'Missing');
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'X-API-Key': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+      
+      console.log('📡 Response status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Error:', errorText);
+        throw new Error(`API Error ${response.status}: ${errorText}`);
+      }
+  
+  const data = await response.json();
+  console.log('✅ Data received:', data);
+  
+  return data;
+};
         
         if (!response.ok) {
           const errorText = await response.text();
