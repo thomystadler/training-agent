@@ -116,9 +116,15 @@
           // Letzte Aktivitäten (30 Tage)
           const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
           const todayStr = new Date().toISOString().split('T')[0];
+          console.log('Fetching activities from', monthAgo, 'to', todayStr);
           const activities = await callAPI(`/api/v1/athlete/${athleteId}/activities?oldest=${monthAgo}&newest=${todayStr}`);
           
           if (Array.isArray(activities)) {
+            console.log(`Loaded ${activities.length} activities`);
+            if (activities.length > 0) {
+              console.log('First activity date:', activities[0].start_date_local);
+              console.log('Last activity date:', activities[activities.length - 1].start_date_local);
+            }
             setRecentActivities(activities);
           }
           
@@ -460,7 +466,7 @@
               ),
               
               recentActivities.length > 0 ? React.createElement('div', { className: 'space-y-2' },
-                recentActivities.slice(-10).reverse().map((activity, idx) => {
+                [...recentActivities].reverse().slice(0, 10).map((activity, idx) => {
                   // Korrekte Feldnamen basierend auf API-Struktur
                   const hr = activity.average_heartrate || null;
                   const watts = activity.icu_weighted_avg_watts || activity.icu_average_watts || null;
