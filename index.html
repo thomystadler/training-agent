@@ -55,6 +55,21 @@
         }
       }, []);
 
+      // Parse Check-in aus Intervals.icu Wellness Comments
+      const parseCheckinFromWellness = (wellness) => {
+        if (!wellness || !wellness.comments) return null;
+        
+        // Format: "Befinden: frisch | Notizen hier..."
+        const match = wellness.comments.match(/Befinden: (\w+)(?:\s*\|\s*(.+))?/);
+        if (match) {
+          return {
+            feeling: match[1],
+            notes: match[2] || ''
+          };
+        }
+        return null;
+      };
+
       const callAPI = async (endpoint, method = 'GET', body = null) => {
         const url = `${CONFIG.WORKER_URL}/proxy${endpoint}`;
         const options = {
@@ -111,6 +126,21 @@
           setWellnessData(wellnessArray);
           if (wellnessArray.length > 0) {
             setTodayWellness(wellnessArray[0]);
+            
+            // Check-in aus Intervals.icu laden
+            const todayCheckin = parseCheckinFromWellness(wellnessArray[0]);
+            if (todayCheckin) {
+              setFeeling(todayCheckin.feeling);
+              setNotes(todayCheckin.notes);
+              setCheckedIn(true);
+              // Auch in LocalStorage speichern für Offline-Verfügbarkeit
+              const today = new Date().toISOString().split('T')[0];
+              localStorage.setItem(`checkin_${today}`, JSON.stringify({
+                feeling: todayCheckin.feeling,
+                notes: todayCheckin.notes,
+                timestamp: wellnessArray[0].updated || new Date().toISOString()
+              }));
+            }
           }
           
           // Letzte Aktivitäten (30 Tage)
@@ -466,7 +496,7 @@
               ),
               
               recentActivities.length > 0 ? React.createElement('div', { className: 'space-y-2' },
-                [...recentActivities].reverse().slice(0, 10).map((activity, idx) => {
+                recentActivities.slice(0, 10).map((activity, idx) => {
                   // Korrekte Feldnamen basierend auf API-Struktur
                   const hr = activity.average_heartrate || null;
                   const watts = activity.icu_weighted_avg_watts || activity.icu_average_watts || null;
