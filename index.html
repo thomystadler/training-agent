@@ -584,37 +584,81 @@
                   const hr = activity.average_heartrate || null;
                   const watts = activity.icu_weighted_avg_watts || activity.icu_average_watts || null;
                   
+                  // Zonen-Zeiten holen (in Sekunden)
+                  const zoneTimes = activity.power_zone_times || [];
+                  
+                  // Top 3 Zonen mit meister Zeit finden
+                  const zonesWithTime = zoneTimes
+                    .map((seconds, zoneIdx) => ({ zone: zoneIdx + 1, seconds }))
+                    .filter(z => z.seconds > 0)
+                    .sort((a, b) => b.seconds - a.seconds)
+                    .slice(0, 3);
+                  
+                  const totalTime = zoneTimes.reduce((sum, t) => sum + t, 0);
+                  
                   return React.createElement('div', { 
                     key: idx,
-                    className: 'bg-slate-700/30 rounded-lg p-4 flex items-center justify-between hover:bg-slate-700/50 transition-colors'
+                    className: 'bg-slate-700/30 rounded-lg p-4 hover:bg-slate-700/50 transition-colors'
                   },
-                    React.createElement('div', { className: 'flex-1' },
-                      React.createElement('div', { className: 'font-medium' }, activity.name || 'Training'),
-                      React.createElement('div', { className: 'text-sm text-slate-400 mt-1' },
-                        new Date(activity.start_date_local).toLocaleDateString('de-DE', { 
-                          weekday: 'short', 
-                          day: '2-digit', 
-                          month: '2-digit' 
-                        })
+                    React.createElement('div', { className: 'flex items-center justify-between mb-3' },
+                      React.createElement('div', { className: 'flex-1' },
+                        React.createElement('div', { className: 'font-medium' }, activity.name || 'Training'),
+                        React.createElement('div', { className: 'text-sm text-slate-400 mt-1' },
+                          new Date(activity.start_date_local).toLocaleDateString('de-DE', { 
+                            weekday: 'short', 
+                            day: '2-digit', 
+                            month: '2-digit' 
+                          })
+                        )
+                      ),
+                      React.createElement('div', { className: 'grid grid-cols-4 gap-4 text-right' },
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-lg font-bold' }, activity.icu_training_load?.toFixed(0) || 'N/A'),
+                          React.createElement('div', { className: 'text-xs text-slate-400' }, 'TSS')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-lg font-bold' }, (activity.moving_time / 3600).toFixed(1)),
+                          React.createElement('div', { className: 'text-xs text-slate-400' }, 'Stunden')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-lg font-bold' }, hr ? Math.round(hr) : 'N/A'),
+                          React.createElement('div', { className: 'text-xs text-slate-400' }, 'Ø HR')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-lg font-bold' }, watts ? Math.round(watts) : 'N/A'),
+                          React.createElement('div', { className: 'text-xs text-slate-400' }, 'Ø Watt')
+                        )
                       )
                     ),
-                    React.createElement('div', { className: 'grid grid-cols-4 gap-4 text-right' },
-                      React.createElement('div', null,
-                        React.createElement('div', { className: 'text-lg font-bold' }, activity.icu_training_load?.toFixed(0) || 'N/A'),
-                        React.createElement('div', { className: 'text-xs text-slate-400' }, 'TSS')
-                      ),
-                      React.createElement('div', null,
-                        React.createElement('div', { className: 'text-lg font-bold' }, (activity.moving_time / 3600).toFixed(1)),
-                        React.createElement('div', { className: 'text-xs text-slate-400' }, 'Stunden')
-                      ),
-                      React.createElement('div', null,
-                        React.createElement('div', { className: 'text-lg font-bold' }, hr ? Math.round(hr) : 'N/A'),
-                        React.createElement('div', { className: 'text-xs text-slate-400' }, 'Ø HR')
-                      ),
-                      React.createElement('div', null,
-                        React.createElement('div', { className: 'text-lg font-bold' }, watts ? Math.round(watts) : 'N/A'),
-                        React.createElement('div', { className: 'text-xs text-slate-400' }, 'Ø Watt')
-                      )
+                    
+                    // Zonen-Anzeige
+                    zonesWithTime.length > 0 && React.createElement('div', { className: 'space-y-1 pt-2 border-t border-slate-600' },
+                      zonesWithTime.map((zoneData, zIdx) => {
+                        const minutes = Math.round(zoneData.seconds / 60);
+                        const percentage = totalTime > 0 ? (zoneData.seconds / totalTime * 100) : 0;
+                        
+                        // Farben für Zonen
+                        const zoneColors = {
+                          1: 'bg-gray-500',
+                          2: 'bg-blue-500',
+                          3: 'bg-green-500',
+                          4: 'bg-yellow-500',
+                          5: 'bg-orange-500',
+                          6: 'bg-red-500',
+                          7: 'bg-purple-500'
+                        };
+                        
+                        return React.createElement('div', { key: zIdx, className: 'flex items-center space-x-2' },
+                          React.createElement('div', { className: 'text-xs text-slate-400 w-8' }, `Z${zoneData.zone}`),
+                          React.createElement('div', { className: 'flex-1 bg-slate-800 rounded-full h-2 overflow-hidden' },
+                            React.createElement('div', { 
+                              className: zoneColors[zoneData.zone] || 'bg-slate-500',
+                              style: { width: `${percentage}%` }
+                            })
+                          ),
+                          React.createElement('div', { className: 'text-xs text-slate-300 w-16 text-right' }, `${minutes}min`)
+                        );
+                      })
                     )
                   );
                 })
