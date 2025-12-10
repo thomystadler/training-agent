@@ -584,27 +584,25 @@
                   const hr = activity.average_heartrate || null;
                   const watts = activity.icu_weighted_avg_watts || activity.icu_average_watts || null;
                   
-                  // Zonen-Zeiten holen (in Sekunden)
-                  const zoneTimes = activity.icu_zone_times || [];
+                  // Zonen-Zeiten holen (Array von Objekten mit {id, secs})
+                  const zoneData = activity.icu_zone_times || [];
                   
                   // Debug: Log für erstes Training
                   if (idx === 0) {
                     console.log('Activity Zonen-Debug:', {
                       name: activity.name,
                       has_icu_zone_times: !!activity.icu_zone_times,
-                      zone_times: activity.icu_zone_times,
-                      all_keys: Object.keys(activity).filter(k => k.includes('zone'))
+                      zone_times: activity.icu_zone_times
                     });
                   }
                   
                   // Top 3 Zonen mit meister Zeit finden
-                  const zonesWithTime = zoneTimes
-                    .map((seconds, zoneIdx) => ({ zone: zoneIdx + 1, seconds }))
-                    .filter(z => z.seconds > 0)
-                    .sort((a, b) => b.seconds - a.seconds)
+                  const zonesWithTime = zoneData
+                    .filter(z => z.secs > 0 && z.id.startsWith('Z')) // Nur Z1-Z7, kein SS
+                    .sort((a, b) => b.secs - a.secs)
                     .slice(0, 3);
                   
-                  const totalTime = zoneTimes.reduce((sum, t) => sum + t, 0);
+                  const totalTime = zoneData.reduce((sum, z) => sum + z.secs, 0);
                   
                   return React.createElement('div', { 
                     key: idx,
@@ -643,9 +641,10 @@
                     
                     // Zonen-Anzeige
                     zonesWithTime.length > 0 && React.createElement('div', { className: 'space-y-1 pt-2 border-t border-slate-600' },
-                      zonesWithTime.map((zoneData, zIdx) => {
-                        const minutes = Math.round(zoneData.seconds / 60);
-                        const percentage = totalTime > 0 ? (zoneData.seconds / totalTime * 100) : 0;
+                      zonesWithTime.map((zone, zIdx) => {
+                        const minutes = Math.round(zone.secs / 60);
+                        const percentage = totalTime > 0 ? (zone.secs / totalTime * 100) : 0;
+                        const zoneNumber = parseInt(zone.id.replace('Z', ''));
                         
                         // Farben für Zonen
                         const zoneColors = {
@@ -659,10 +658,10 @@
                         };
                         
                         return React.createElement('div', { key: zIdx, className: 'flex items-center space-x-2' },
-                          React.createElement('div', { className: 'text-xs text-slate-400 w-8' }, `Z${zoneData.zone}`),
+                          React.createElement('div', { className: 'text-xs text-slate-400 w-8' }, zone.id),
                           React.createElement('div', { className: 'flex-1 bg-slate-800 rounded-full h-2 overflow-hidden' },
                             React.createElement('div', { 
-                              className: zoneColors[zoneData.zone] || 'bg-slate-500',
+                              className: zoneColors[zoneNumber] || 'bg-slate-500',
                               style: { width: `${percentage}%` }
                             })
                           ),
