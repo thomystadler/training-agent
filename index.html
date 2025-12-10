@@ -585,14 +585,14 @@
                   const watts = activity.icu_weighted_avg_watts || activity.icu_average_watts || null;
                   
                   // Zonen-Zeiten holen (in Sekunden)
-                  const zoneTimes = activity.power_zone_times || [];
+                  const zoneTimes = activity.icu_zone_times || [];
                   
                   // Debug: Log für erstes Training
                   if (idx === 0) {
                     console.log('Activity Zonen-Debug:', {
                       name: activity.name,
-                      has_power_zone_times: !!activity.power_zone_times,
-                      zone_times: activity.power_zone_times,
+                      has_icu_zone_times: !!activity.icu_zone_times,
+                      zone_times: activity.icu_zone_times,
                       all_keys: Object.keys(activity).filter(k => k.includes('zone'))
                     });
                   }
