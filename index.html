@@ -12,7 +12,7 @@
   <script type="module">
     import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
     import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
-    import { Activity, Heart, Calendar, MessageSquare, RefreshCw, AlertCircle } from 'https://esm.sh/lucide-react@0.263.1';
+    import { Activity, Heart, Calendar, RefreshCw, AlertCircle } from 'https://esm.sh/lucide-react@0.263.1';
 
     const CONFIG = {
       WORKER_URL: 'https://intervals-icu-proxy.thomystadler.workers.dev',
@@ -37,66 +37,6 @@
       const [feeling, setFeeling] = useState('');
       const [notes, setNotes] = useState('');
       const [checkedIn, setCheckedIn] = useState(false);
-      
-      // Chat State -> Ask Claude State
-      const [activeTab, setActiveTab] = useState('dashboard');
-      const [showAskClaude, setShowAskClaude] = useState(false);
-
-      // Sammle Context für Claude
-      const generateContext = () => {
-        const today = new Date().toLocaleDateString('de-DE');
-        const recovery = calculateRecoveryScore();
-        
-        let context = `Training Agent Context - ${today}\n\n`;
-        
-        // Recovery Status
-        if (recovery) {
-          context += `Recovery Status:\n`;
-          context += `- Score: ${recovery.score.toFixed(1)}/10\n`;
-          context += `- HRV: ${recovery.todayHRV}ms (${recovery.hrvDelta > 0 ? '+' : ''}${recovery.hrvDelta.toFixed(1)}% vs 7d)\n`;
-          context += `- Ruhepuls: ${recovery.todayRHR} bpm (${recovery.rhrDelta > 0 ? '+' : ''}${recovery.rhrDelta.toFixed(1)}% vs 7d)\n`;
-          context += `- Gewicht: ${todayWellness?.weight?.toFixed(1) || athleteData?.icu_weight?.toFixed(1) || 'N/A'}kg\n`;
-          context += `- ATL: ${recovery.atl?.toFixed(0) || 'N/A'}\n\n`;
-        }
-        
-        // Check-in
-        if (feeling) {
-          context += `Check-in heute:\n`;
-          context += `- Befinden: ${feeling}\n`;
-          if (notes) context += `- Notizen: ${notes}\n`;
-          context += `\n`;
-        }
-        
-        // Letzte Trainings
-        if (recentActivities.length > 0) {
-          context += `Letzte 5 Trainings:\n`;
-          recentActivities.slice(0, 5).forEach(activity => {
-            const date = new Date(activity.start_date_local).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
-            const tss = activity.icu_training_load?.toFixed(0) || 'N/A';
-            const duration = (activity.moving_time / 3600).toFixed(1);
-            const hr = activity.average_heartrate ? Math.round(activity.average_heartrate) : 'N/A';
-            const watts = activity.icu_weighted_avg_watts ? Math.round(activity.icu_weighted_avg_watts) : 'N/A';
-            context += `- ${date}: ${activity.name || 'Training'} | ${tss} TSS, ${duration}h, ${hr} HR, ${watts}W\n`;
-          });
-          context += `\n`;
-        }
-        
-        context += `Frage: [Hier deine Frage einfügen]\n`;
-        
-        return context;
-      };
-
-      const handleAskClaude = () => {
-        const context = generateContext();
-        
-        // In Zwischenablage kopieren
-        navigator.clipboard.writeText(context).then(() => {
-          setShowAskClaude(true);
-        }).catch(err => {
-          console.error('Clipboard error:', err);
-          alert('Context konnte nicht kopiert werden. Bitte manuell kopieren.');
-        });
-      };
 
       // Load check-in from LocalStorage
       useEffect(() => {
@@ -429,13 +369,6 @@
                   title: 'Aktualisieren'
                 },
                   React.createElement(RefreshCw, { className: `w-5 h-5 ${loading ? 'animate-spin' : ''}` })
-                ),
-                React.createElement('button', {
-                  onClick: handleAskClaude,
-                  className: 'px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 transition-colors flex items-center space-x-2'
-                },
-                  React.createElement(MessageSquare, { className: 'w-5 h-5' }),
-                  React.createElement('span', null, 'Ask Claude')
                 )
               )
             )
@@ -680,48 +613,6 @@
                   );
                 })
               ) : React.createElement('div', { className: 'text-slate-400 text-center py-8' }, 'Keine Aktivitäten')
-            )
-          ),
-
-          // Ask Claude Modal
-          showAskClaude && React.createElement('div', { 
-            className: 'fixed inset-0 bg-black/50 flex items-center justify-center z-50',
-            onClick: () => setShowAskClaude(false)
-          },
-            React.createElement('div', { 
-              className: 'bg-slate-800 rounded-xl p-6 max-w-2xl w-full mx-4 border border-slate-700',
-              onClick: (e) => e.stopPropagation()
-            },
-              React.createElement('h2', { className: 'text-2xl font-bold mb-4 flex items-center' },
-                React.createElement(MessageSquare, { className: 'w-6 h-6 mr-2 text-blue-400' }),
-                'Mit Claude besprechen'
-              ),
-              
-              React.createElement('div', { className: 'bg-slate-700/50 rounded-lg p-4 mb-4' },
-                React.createElement('div', { className: 'font-semibold mb-2' }, '✅ Context in Zwischenablage kopiert!'),
-                React.createElement('div', { className: 'text-sm text-slate-300' }, 
-                  'Der aktuelle Trainings-Context wurde kopiert. Klicke auf "Zu Claude Projekt", füge den Context ein und stelle deine Frage.'
-                )
-              ),
-              
-              React.createElement('div', { className: 'bg-slate-900 rounded-lg p-4 mb-4 max-h-96 overflow-y-auto' },
-                React.createElement('pre', { className: 'text-xs text-slate-300 whitespace-pre-wrap font-mono' }, 
-                  generateContext()
-                )
-              ),
-              
-              React.createElement('div', { className: 'flex items-center space-x-3' },
-                React.createElement('a', {
-                  href: 'https://claude.ai/project/019af852-ea99-76c1-80b9-92253bb0139a',
-                  target: '_blank',
-                  rel: 'noopener noreferrer',
-                  className: 'flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center font-medium py-3 px-4 rounded-lg transition-colors'
-                }, 'Zu Claude Projekt öffnen'),
-                React.createElement('button', {
-                  onClick: () => setShowAskClaude(false),
-                  className: 'px-6 py-3 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors'
-                }, 'Schließen')
-              )
             )
           )
         )
