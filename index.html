@@ -31,6 +31,7 @@
       const [wellnessData, setWellnessData] = useState([]);
       const [todayWellness, setTodayWellness] = useState(null);
       const [recentActivities, setRecentActivities] = useState([]);
+      const [upcomingEvents, setUpcomingEvents] = useState([]);
       
       // Check-in State
       const [feeling, setFeeling] = useState('');
@@ -214,6 +215,21 @@
               console.log('Last activity date:', activities[activities.length - 1].start_date_local);
             }
             setRecentActivities(activities);
+          }
+          
+          // Events (kommende)
+          try {
+            const events = await callAPI(`/api/v1/athlete/${athleteId}/events`);
+            if (Array.isArray(events)) {
+              const today = new Date().toISOString().split('T')[0];
+              const upcoming = events.filter(e => e.start_date_local >= today).sort((a, b) => 
+                new Date(a.start_date_local) - new Date(b.start_date_local)
+              );
+              setUpcomingEvents(upcoming);
+              console.log(`Loaded ${upcoming.length} upcoming events`);
+            }
+          } catch (err) {
+            console.warn('No events found');
           }
           
           setIsConnected(true);
@@ -431,6 +447,53 @@
           
           activeTab === 'dashboard' && React.createElement('div', { className: 'space-y-6' },
             
+            // Event Countdown
+            upcomingEvents.length > 0 && React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
+              React.createElement('h2', { className: 'text-xl font-bold mb-4' }, '🎯 Nächstes Event'),
+              (() => {
+                const nextEvent = upcomingEvents[0];
+                const eventDate = new Date(nextEvent.start_date_local);
+                const today = new Date();
+                const daysUntil = Math.ceil((eventDate - today) / (1000 * 60 * 60 * 24));
+                
+                // Bereitschaft berechnen (CTL basiert)
+                const targetCTL = nextEvent.category === 'A' ? 100 : 80;
+                const currentCTL = todayWellness?.ctl || 0;
+                const readiness = Math.min(100, Math.round((currentCTL / targetCTL) * 100));
+                
+                return React.createElement('div', { className: 'flex items-center justify-between' },
+                  React.createElement('div', { className: 'flex-1' },
+                    React.createElement('div', { className: 'text-2xl font-bold mb-1' }, nextEvent.name),
+                    React.createElement('div', { className: 'text-slate-400 mb-3' }, 
+                      `${daysUntil} Tage (${eventDate.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })})`
+                    ),
+                    React.createElement('div', { className: 'flex items-center space-x-4' },
+                      React.createElement('div', null,
+                        React.createElement('div', { className: 'text-sm text-slate-400' }, 'Bereitschaft'),
+                        React.createElement('div', { 
+                          className: `text-xl font-bold ${readiness >= 80 ? 'text-green-400' : readiness >= 60 ? 'text-yellow-400' : 'text-orange-400'}`
+                        }, `${readiness}%`)
+                      ),
+                      React.createElement('div', null,
+                        React.createElement('div', { className: 'text-sm text-slate-400' }, 'CTL-Ziel'),
+                        React.createElement('div', { className: 'text-xl font-bold' }, targetCTL)
+                      ),
+                      React.createElement('div', null,
+                        React.createElement('div', { className: 'text-sm text-slate-400' }, 'CTL aktuell'),
+                        React.createElement('div', { className: 'text-xl font-bold' }, currentCTL.toFixed(1))
+                      )
+                    )
+                  ),
+                  React.createElement('div', { 
+                    className: `px-6 py-3 rounded-xl font-bold text-sm ${
+                      nextEvent.category === 'A' ? 'bg-red-600' : 
+                      nextEvent.category === 'B' ? 'bg-orange-600' : 'bg-blue-600'
+                    }`
+                  }, `${nextEvent.category}-Event`)
+                );
+              })()
+            ),
+            
             // Check-in Box
             React.createElement('div', { className: 'bg-slate-800 rounded-xl p-6 border border-slate-700' },
               React.createElement('h2', { className: 'text-xl font-bold mb-4' }, 'Täglicher Check-in'),
@@ -527,12 +590,32 @@
                   ),
                   React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
                     React.createElement('div', { className: 'flex items-baseline' },
-                      React.createElement('div', { className: 'text-3xl font-bold mr-2' }, todayWellness.weight ? todayWellness.weight.toFixed(1) : athleteData?.icu_weight?.toFixed(1) || 'N/A'),
+                      React.createElement('div', { className: 'text-3xl font-bold mr-2' }, 
+                        (() => {
+                          const currentWeight = todayWellness?.weight || athleteData?.icu_weight;
+                          return currentWeight ? currentWeight.toFixed(1) : 'N/A';
+                        })()
+                      ),
                       React.createElement('div', { className: 'text-sm text-slate-400' }, 'kg')
                     ),
-                    React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 'Gewicht'),
-                    React.createElement('div', { className: 'text-sm text-slate-300 mt-2' }, 
-                      athleteData?.icu_weight ? `Ziel: 83kg` : ''
+                    React.createElement('div', { className: 'text-xs text-slate-400 mt-1' }, 'Gewicht (Ziel: 83kg)'),
+                    React.createElement('div', { 
+                      className: 'text-sm font-semibold mt-2',
+                      style: { color: '#94a3b8' }
+                    }, 
+                      (() => {
+                        const currentWeight = todayWellness?.weight || athleteData?.icu_weight;
+                        if (!currentWeight || !wellnessData.length) return '';
+                        
+                        // Berechne 7-Tage-Durchschnitt
+                        const recentWeights = wellnessData.filter(d => d.weight).slice(0, 7);
+                        if (recentWeights.length < 2) return '';
+                        
+                        const avgWeight = recentWeights.reduce((sum, d) => sum + d.weight, 0) / recentWeights.length;
+                        const delta = currentWeight - avgWeight;
+                        
+                        return `${delta > 0 ? '+' : ''}${delta.toFixed(1)}kg vs 7d`;
+                      })()
                     )
                   ),
                   React.createElement('div', { className: 'bg-slate-700/30 rounded-lg p-4' },
