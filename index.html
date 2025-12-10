@@ -587,6 +587,16 @@
                   // Zonen-Zeiten holen (in Sekunden)
                   const zoneTimes = activity.power_zone_times || [];
                   
+                  // Debug: Log für erstes Training
+                  if (idx === 0) {
+                    console.log('Activity Zonen-Debug:', {
+                      name: activity.name,
+                      has_power_zone_times: !!activity.power_zone_times,
+                      zone_times: activity.power_zone_times,
+                      all_keys: Object.keys(activity).filter(k => k.includes('zone'))
+                    });
+                  }
+                  
                   // Top 3 Zonen mit meister Zeit finden
                   const zonesWithTime = zoneTimes
                     .map((seconds, zoneIdx) => ({ zone: zoneIdx + 1, seconds }))
