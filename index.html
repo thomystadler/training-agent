@@ -217,10 +217,6 @@
           }
           
           setIsConnected(true);
-          setChatMessages([{
-            role: 'assistant',
-            content: `✅ Verbunden! Ich habe ${activities.length} Aktivitäten der letzten 30 Tage geladen. Was möchtest du wissen?`
-          }]);
         } catch (err) {
           console.error('Connection error:', err);
           setError(err.message);
