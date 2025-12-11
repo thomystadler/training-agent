@@ -157,12 +157,13 @@
             setRecentActivities(activities);
           }
           
-          // Events (kommende)
+          // Events (kommende) - hole alle bis Ende 2026
           try {
-            const events = await callAPI(`/api/v1/athlete/${athleteId}/events`);
+            const today = new Date().toISOString().split('T')[0];
+            const endOf2026 = '2026-12-31';
+            const events = await callAPI(`/api/v1/athlete/${athleteId}/events?oldest=${today}&newest=${endOf2026}`);
             console.log('Events Debug - Raw response:', events);
             if (Array.isArray(events)) {
-              const today = new Date().toISOString().split('T')[0];
               const upcoming = events.filter(e => e.start_date_local >= today).sort((a, b) => 
                 new Date(a.start_date_local) - new Date(b.start_date_local)
               );
