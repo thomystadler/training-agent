@@ -160,16 +160,23 @@
           // Events (kommende)
           try {
             const events = await callAPI(`/api/v1/athlete/${athleteId}/events`);
+            console.log('Events Debug - Raw response:', events);
             if (Array.isArray(events)) {
               const today = new Date().toISOString().split('T')[0];
               const upcoming = events.filter(e => e.start_date_local >= today).sort((a, b) => 
                 new Date(a.start_date_local) - new Date(b.start_date_local)
               );
+              console.log('Events Debug:', {
+                total: events.length,
+                upcoming: upcoming.length,
+                today: today,
+                events: upcoming.map(e => ({ name: e.name, date: e.start_date_local, category: e.category }))
+              });
               setUpcomingEvents(upcoming);
               console.log(`Loaded ${upcoming.length} upcoming events`);
             }
           } catch (err) {
-            console.warn('No events found');
+            console.warn('No events found', err);
           }
           
           setIsConnected(true);
@@ -587,64 +594,65 @@
                   // Zonen-Zeiten holen (Array von Objekten mit {id, secs})
                   const zoneData = activity.icu_zone_times || [];
                   
-                  // Extrahiere Z1-Z5 Zeiten in Minuten
+                  // Berechne Gesamtzeit für Prozente
+                  const totalSecs = zoneData.reduce((sum, z) => sum + z.secs, 0);
+                  
+                  // Extrahiere Z1-Z5 als Prozente
                   const zones = {};
                   zoneData.forEach(z => {
                     if (z.id.match(/^Z[1-5]$/)) {
-                      zones[z.id] = Math.round(z.secs / 60);
+                      zones[z.id] = totalSecs > 0 ? Math.round((z.secs / totalSecs) * 100) : 0;
                     }
                   });
                   
                   return React.createElement('div', { 
                     key: idx,
-                    className: 'bg-slate-700/30 rounded-lg p-4 hover:bg-slate-700/50 transition-colors'
+                    className: 'bg-slate-700/30 rounded-lg p-3 hover:bg-slate-700/50 transition-colors'
                   },
-                    React.createElement('div', { className: 'flex items-center justify-between' },
-                      React.createElement('div', { className: 'flex-1' },
-                        React.createElement('div', { className: 'font-medium mb-1' }, 
-                          `${activity.name || 'Training'} - ${new Date(activity.start_date_local).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })}`
+                    React.createElement('div', null,
+                      React.createElement('div', { className: 'font-medium text-sm mb-2' }, 
+                        `${activity.name || 'Training'} - ${new Date(activity.start_date_local).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })}`
+                      ),
+                      React.createElement('div', { className: 'grid gap-2 text-center', style: { gridTemplateColumns: 'repeat(10, 1fr)' } },
+                        // Zonen Z1-Z5
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, zones['Z1'] || 0),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'Z1')
                         ),
-                        React.createElement('div', { className: 'grid gap-4 text-center', style: { gridTemplateColumns: 'repeat(9, minmax(0, 1fr))' } },
-                          // Zonen Z1-Z5
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, zones['Z1'] || 0),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'Z1')
-                          ),
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, zones['Z2'] || 0),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'Z2')
-                          ),
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, zones['Z3'] || 0),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'Z3')
-                          ),
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, zones['Z4'] || 0),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'Z4')
-                          ),
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, zones['Z5'] || 0),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'Z5')
-                          ),
-                          // Separator
-                          React.createElement('div', { className: 'border-l border-slate-600' }),
-                          // TSS, Zeit, HR, Watt
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, activity.icu_training_load?.toFixed(0) || 'N/A'),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'TSS')
-                          ),
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, (activity.moving_time / 3600).toFixed(1)),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'h')
-                          ),
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, hr ? Math.round(hr) : 'N/A'),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'ØHR')
-                          ),
-                          React.createElement('div', null,
-                            React.createElement('div', { className: 'text-lg font-bold' }, watts ? Math.round(watts) : 'N/A'),
-                            React.createElement('div', { className: 'text-xs text-slate-400' }, 'ØW')
-                          )
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, zones['Z2'] || 0),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'Z2')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, zones['Z3'] || 0),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'Z3')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, zones['Z4'] || 0),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'Z4')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, zones['Z5'] || 0),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'Z5')
+                        ),
+                        // Separator
+                        React.createElement('div', { className: 'border-l border-slate-600 mx-1' }),
+                        // TSS, Zeit, HR, Watt
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, activity.icu_training_load?.toFixed(0) || '-'),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'TSS')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, (activity.moving_time / 3600).toFixed(1)),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'h')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, hr ? Math.round(hr) : '-'),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'HR')
+                        ),
+                        React.createElement('div', null,
+                          React.createElement('div', { className: 'text-base font-bold' }, watts ? Math.round(watts) : '-'),
+                          React.createElement('div', { className: 'text-[10px] text-slate-400' }, 'W')
                         )
                       )
                     )
